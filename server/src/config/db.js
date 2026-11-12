@@ -17,6 +17,13 @@ const connectDB = async () => {
     let mongoUri = process.env.MONGODB_URI;
 
     if (!mongoUri || mongoUri.trim() === '') {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('❌ FATAL: MONGODB_URI environment variable is missing in production!');
+        console.error('👉 Please configure MONGODB_URI in your Render Dashboard (Environment tab).');
+        console.error('👉 Format: mongodb+srv://<username>:<password>@cluster0.abcde.mongodb.net/resq?retryWrites=true&w=majority');
+        throw new Error('MONGODB_URI is required when running in production on Render.');
+      }
+
       console.log('ℹ️  No MONGODB_URI specified. Initializing embedded MongoDB server for local development...');
       try {
         const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -34,7 +41,7 @@ const connectDB = async () => {
     }
 
     const conn = await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 8000,
+      serverSelectionTimeoutMS: 10000,
       autoIndex: true,
     });
 

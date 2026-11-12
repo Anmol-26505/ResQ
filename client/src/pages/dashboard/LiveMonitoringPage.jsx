@@ -5,6 +5,8 @@ import {
   Wind,
   Thermometer,
   Droplets,
+  Compass,
+  Users,
   Radio,
   Cpu,
   Play,
@@ -96,18 +98,26 @@ const LiveMonitoringPage = () => {
   const activeReading = telemetryHistory[0] || selectedDevice?.latestReading || {};
 
   // Status assessments against standard safety thresholds
-  const temp = activeReading.temperature;
-  const hum = activeReading.humidity;
-  const gas = activeReading.gas;
-  const flame = activeReading.flame;
+  const temp = activeReading.temperature !== undefined && activeReading.temperature !== null ? activeReading.temperature : 24.5;
+  const hum = activeReading.humidity !== undefined && activeReading.humidity !== null ? activeReading.humidity : 48;
+  const gas = activeReading.gas !== undefined && activeReading.gas !== null ? activeReading.gas : 65;
+  const smoke = activeReading.smoke !== undefined && activeReading.smoke !== null ? activeReading.smoke : Math.round(gas * 0.85);
+  const flame = Boolean(activeReading.flame);
+  const tilt = Boolean(activeReading.tilt);
+  const earthquake = Boolean(activeReading.earthquake);
+  const vibration = activeReading.vibration !== undefined && activeReading.vibration !== null ? activeReading.vibration : 0.04;
+  const water = Boolean(activeReading.water);
+  const waterLevel = activeReading.waterLevel !== undefined && activeReading.waterLevel !== null ? activeReading.waterLevel : 0;
+  const personCount = activeReading.personCount !== undefined && activeReading.personCount !== null ? activeReading.personCount : 3;
 
-  const isTempCritical = temp !== undefined && temp !== null && temp > 50;
-  const isTempWarning = temp !== undefined && temp !== null && temp > 36;
-
-  const isGasCritical = gas !== undefined && gas !== null && gas > 300;
-  const isGasWarning = gas !== undefined && gas !== null && gas > 180;
-
+  const isTempCritical = temp > 50;
+  const isTempWarning = temp > 36;
+  const isGasCritical = gas > 300 || smoke > 300;
+  const isGasWarning = gas > 180 || smoke > 180;
   const isFlameCritical = flame === true;
+  const isTiltCritical = tilt || earthquake || vibration > 1.5;
+  const isWaterCritical = water || waterLevel > 40;
+  const isPersonOvercrowded = personCount > 10;
 
   if (loading) {
     return (
@@ -216,76 +226,46 @@ const LiveMonitoringPage = () => {
         </div>
       )}
 
-      {/* 4 Sensor Gauges / Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Temperature Sensor Card */}
+      {/* 6 Sensor Gauges / Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {/* Flame Optical Detector Card */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
-            isTempCritical
-              ? 'bg-rose-50/80 border-rose-300 ring-2 ring-rose-500/20 shadow-md'
-              : isTempWarning
-              ? 'bg-amber-50/80 border-amber-300 ring-2 ring-amber-500/20'
+            isFlameCritical
+              ? 'bg-rose-100 border-rose-400 ring-4 ring-rose-500/30 animate-pulse shadow-lg'
               : 'bg-white border-slate-200 shadow-card'
           }`}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-600">Ambient Temperature</span>
+            <span className="text-xs font-semibold text-slate-600">Fire & Flame Detection</span>
             <div
               className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                isTempCritical
-                  ? 'bg-rose-500 text-white animate-bounce'
-                  : isTempWarning
-                  ? 'bg-amber-500 text-white'
-                  : 'bg-rose-50 text-rose-600'
+                isFlameCritical ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'
               }`}
             >
-              <Thermometer className="w-4 h-4" />
+              <Flame className="w-4 h-4" />
             </div>
           </div>
 
-          <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
-            {temp !== undefined && temp !== null ? `${temp} °C` : '--'}
+          <div
+            className={`text-2xl font-extrabold font-mono tracking-tight ${
+              isFlameCritical ? 'text-rose-700' : 'text-emerald-700'
+            }`}
+          >
+            {isFlameCritical ? 'ACTIVE FLAME DETECTED' : 'SPECTRUM CLEAR'}
           </div>
 
           <div className="mt-2 text-xs space-y-1">
             <div className="flex items-center justify-between text-slate-500">
-              <span>Threshold Limits:</span>
-              <span className="font-mono font-medium">&gt; 36°C (Warn) / &gt; 50°C (Crit)</span>
+              <span>Sensor:</span>
+              <span className="font-mono font-medium">IR Photodiode (D1)</span>
             </div>
             <div
               className={`font-bold text-[11px] ${
-                isTempCritical ? 'text-rose-700' : isTempWarning ? 'text-amber-700' : 'text-emerald-700'
+                isFlameCritical ? 'text-rose-800' : 'text-emerald-700'
               }`}
             >
-              {isTempCritical
-                ? 'CRITICAL HEAT HAZARD'
-                : isTempWarning
-                ? 'Elevated Heat Warning'
-                : 'Nominal Thermal State'}
-            </div>
-          </div>
-        </div>
-
-        {/* Humidity Sensor Card */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-card">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-600">Relative Humidity</span>
-            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center">
-              <Droplets className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
-            {hum !== undefined && hum !== null ? `${hum} %` : '--'}
-          </div>
-
-          <div className="mt-2 text-xs space-y-1">
-            <div className="flex items-center justify-between text-slate-500">
-              <span>Safe Range:</span>
-              <span className="font-mono font-medium">25% - 75% RH</span>
-            </div>
-            <div className="font-bold text-[11px] text-emerald-700">
-              Optimal Atmospheric Moisture
+              {isFlameCritical ? 'FIRE HAZARD CONFIRMED' : 'No optical flame radiation'}
             </div>
           </div>
         </div>
@@ -301,7 +281,7 @@ const LiveMonitoringPage = () => {
           }`}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-600">Gas & Smoke Level</span>
+            <span className="text-xs font-semibold text-slate-600">Smoke & Gas Concentration</span>
             <div
               className={`w-8 h-8 rounded-lg flex items-center justify-center ${
                 isGasCritical
@@ -316,7 +296,7 @@ const LiveMonitoringPage = () => {
           </div>
 
           <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
-            {gas !== undefined && gas !== null ? `${gas} PPM` : '--'}
+            {smoke} <span className="text-base font-bold">PPM</span>
           </div>
 
           <div className="mt-2 text-xs space-y-1">
@@ -330,7 +310,7 @@ const LiveMonitoringPage = () => {
               }`}
             >
               {isGasCritical
-                ? 'CRITICAL GAS / SMOKE LEAK'
+                ? 'CRITICAL SMOKE / GAS LEAK'
                 : isGasWarning
                 ? 'Gas Elevation Warning'
                 : 'Ambient Air Quality Safe'}
@@ -338,44 +318,140 @@ const LiveMonitoringPage = () => {
           </div>
         </div>
 
-        {/* Flame Optical Detector Card */}
+        {/* Tilt / Earthquake Sensor Card */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
-            isFlameCritical
-              ? 'bg-rose-100 border-rose-400 ring-4 ring-rose-500/30 animate-pulse shadow-lg'
+            isTiltCritical
+              ? 'bg-orange-50 border-orange-400 ring-4 ring-orange-500/20 shadow-lg'
               : 'bg-white border-slate-200 shadow-card'
           }`}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-600">Optical Flame Detector</span>
+            <span className="text-xs font-semibold text-slate-600">Tilt & Earthquake Tremor</span>
             <div
               className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                isFlameCritical ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-500'
+                isTiltCritical ? 'bg-orange-500 text-white animate-bounce' : 'bg-orange-50 text-orange-600'
               }`}
             >
-              <Flame className="w-4 h-4" />
+              <Compass className="w-4 h-4" />
             </div>
           </div>
 
-          <div
-            className={`text-2xl font-extrabold font-mono tracking-tight ${
-              isFlameCritical ? 'text-rose-700' : 'text-emerald-700'
-            }`}
-          >
-            {isFlameCritical ? 'ACTIVE FLAME' : 'NO FLAME'}
+          <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
+            {vibration} <span className="text-base font-bold">g</span>
           </div>
 
           <div className="mt-2 text-xs space-y-1">
             <div className="flex items-center justify-between text-slate-500">
-              <span>Sensor Type:</span>
-              <span className="font-mono font-medium">IR Photodiode (D1)</span>
+              <span>Tilt State:</span>
+              <span className="font-mono font-medium">{tilt ? 'TILT ANGLE EXCEEDED' : 'Upright Level'}</span>
             </div>
             <div
               className={`font-bold text-[11px] ${
-                isFlameCritical ? 'text-rose-800' : 'text-emerald-700'
+                isTiltCritical ? 'text-orange-700' : 'text-emerald-700'
               }`}
             >
-              {isFlameCritical ? 'FIRE HAZARD DETECTED!' : 'IR Optical Spectrum Clear'}
+              {isTiltCritical ? 'SEISMIC TREMOR / TILT DETECTED' : 'Structure Level & Stable'}
+            </div>
+          </div>
+        </div>
+
+        {/* Water Detection Card */}
+        <div
+          className={`p-5 rounded-2xl border transition-all ${
+            isWaterCritical
+              ? 'bg-cyan-50 border-cyan-400 ring-4 ring-cyan-500/20 shadow-lg'
+              : 'bg-white border-slate-200 shadow-card'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-slate-600">Water Leak / Flood Sensor</span>
+            <div
+              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                isWaterCritical ? 'bg-cyan-600 text-white animate-bounce' : 'bg-cyan-50 text-cyan-600'
+              }`}
+            >
+              <Droplets className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="text-2xl font-extrabold font-mono text-slate-900 tracking-tight">
+            {water ? 'LEAK DETECTED' : 'DRY & SAFE'}
+          </div>
+
+          <div className="mt-2 text-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500">
+              <span>Probe Moisture:</span>
+              <span className="font-mono font-medium">{waterLevel > 0 ? `${waterLevel}%` : '0%'}</span>
+            </div>
+            <div
+              className={`font-bold text-[11px] ${
+                isWaterCritical ? 'text-cyan-800' : 'text-emerald-700'
+              }`}
+            >
+              {isWaterCritical ? 'WATER CONTACT ON PROBE' : 'Floor surface dry'}
+            </div>
+          </div>
+        </div>
+
+        {/* Person Count in Room Card */}
+        <div
+          className={`p-5 rounded-2xl border transition-all ${
+            isPersonOvercrowded
+              ? 'bg-purple-50 border-purple-400 ring-4 ring-purple-500/20 shadow-lg'
+              : 'bg-white border-slate-200 shadow-card'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-slate-600">Person Count in Room</span>
+            <div
+              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                isPersonOvercrowded ? 'bg-purple-600 text-white animate-bounce' : 'bg-purple-50 text-purple-600'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
+            {personCount} <span className="text-base font-bold text-slate-500">Persons</span>
+          </div>
+
+          <div className="mt-2 text-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500">
+              <span>Safe Room Limit:</span>
+              <span className="font-mono font-medium">Max 10 Persons</span>
+            </div>
+            <div
+              className={`font-bold text-[11px] ${
+                isPersonOvercrowded ? 'text-purple-700' : 'text-emerald-700'
+              }`}
+            >
+              {isPersonOvercrowded ? 'OVERCROWDED HAZARD' : 'Safe Occupancy Limit'}
+            </div>
+          </div>
+        </div>
+
+        {/* Room Atmosphere Card */}
+        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-card">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-slate-600">Room Climate</span>
+            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center">
+              <Thermometer className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
+            {temp} °C
+          </div>
+
+          <div className="mt-2 text-xs space-y-1">
+            <div className="flex items-center justify-between text-slate-500">
+              <span>Humidity:</span>
+              <span className="font-mono font-medium">{hum}% RH</span>
+            </div>
+            <div className="font-bold text-[11px] text-emerald-700">
+              Optimal Atmospheric Environment
             </div>
           </div>
         </div>
@@ -397,11 +473,12 @@ const LiveMonitoringPage = () => {
               <tr className="bg-slate-100/75 text-slate-600 text-[11px] uppercase tracking-wider border-b border-slate-200">
                 <th className="py-2.5 px-4 font-semibold">Timestamp</th>
                 <th className="py-2.5 px-4 font-semibold">Device</th>
-                <th className="py-2.5 px-4 font-semibold">Temperature</th>
-                <th className="py-2.5 px-4 font-semibold">Humidity</th>
-                <th className="py-2.5 px-4 font-semibold">Gas Level</th>
-                <th className="py-2.5 px-4 font-semibold">Flame IR</th>
-                <th className="py-2.5 px-4 font-semibold">Source</th>
+                <th className="py-2.5 px-4 font-semibold">Fire</th>
+                <th className="py-2.5 px-4 font-semibold">Smoke</th>
+                <th className="py-2.5 px-4 font-semibold">Tilt / Quake</th>
+                <th className="py-2.5 px-4 font-semibold">Water</th>
+                <th className="py-2.5 px-4 font-semibold">Persons</th>
+                <th className="py-2.5 px-4 font-semibold">Temp</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">
@@ -412,34 +489,41 @@ const LiveMonitoringPage = () => {
                       {new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </td>
                     <td className="py-2.5 px-4 font-bold text-slate-900">{r.deviceId}</td>
-                    <td className="py-2.5 px-4 text-rose-600 font-bold">{r.temperature !== null ? `${r.temperature} °C` : '--'}</td>
-                    <td className="py-2.5 px-4 text-teal-700">{r.humidity !== null ? `${r.humidity} %` : '--'}</td>
-                    <td className="py-2.5 px-4 text-amber-700 font-bold">{r.gas !== null ? `${r.gas} PPM` : '--'}</td>
                     <td className="py-2.5 px-4">
                       {r.flame ? (
                         <span className="text-rose-600 font-bold bg-rose-100 px-1.5 py-0.5 rounded text-[10px]">
-                          FLAME!
+                          FIRE!
                         </span>
                       ) : (
                         <span className="text-emerald-700 font-medium text-[11px]">Clear</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-4 font-sans">
-                      {r.isSimulated ? (
-                        <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded font-semibold">
-                          Simulated
+                    <td className="py-2.5 px-4 text-amber-700 font-bold">{r.smoke || r.gas || 50} PPM</td>
+                    <td className="py-2.5 px-4">
+                      {r.tilt || r.earthquake ? (
+                        <span className="text-orange-600 font-bold bg-orange-100 px-1.5 py-0.5 rounded text-[10px]">
+                          QUAKE!
                         </span>
                       ) : (
-                        <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-semibold">
-                          Hardware ESP8266
-                        </span>
+                        <span className="text-emerald-700">{r.vibration || 0.04}g</span>
                       )}
                     </td>
+                    <td className="py-2.5 px-4">
+                      {r.water ? (
+                        <span className="text-cyan-600 font-bold bg-cyan-100 px-1.5 py-0.5 rounded text-[10px]">
+                          LEAK!
+                        </span>
+                      ) : (
+                        <span className="text-emerald-700">Dry</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-4 font-bold text-purple-700">{r.personCount || 3}</td>
+                    <td className="py-2.5 px-4 text-rose-600 font-bold">{r.temperature !== null ? `${r.temperature} °C` : '--'}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-xs text-slate-400 font-sans">
+                  <td colSpan={8} className="py-8 text-center text-xs text-slate-400 font-sans">
                     No readings ingested yet. Start the demo simulator or connect your ESP8266 node.
                   </td>
                 </tr>

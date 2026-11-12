@@ -1,9 +1,19 @@
 import axios from 'axios';
 
+// Centralized API Base URL resolver:
+// Handles both VITE_API_BASE_URL and VITE_API_URL with or without trailing '/api'
+const resolveApiBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+  if (!envUrl || !envUrl.trim()) {
+    // In local development, defaults to '/api' which Vite proxies to localhost:5000
+    return '/api';
+  }
+  const clean = envUrl.trim().replace(/\/+$/, '');
+  return clean.endsWith('/api') ? clean : `${clean}/api`;
+};
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL
-    ? `${import.meta.env.VITE_API_BASE_URL}/api`
-    : '/api',
+  baseURL: resolveApiBaseUrl(),
   headers: {
     'Content-Type': 'application/json',
   },

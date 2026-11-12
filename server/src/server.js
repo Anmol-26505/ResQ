@@ -4,6 +4,7 @@ const { connectDB, disconnectDB } = require('./config/db');
 const { initSocket, broadcastDeviceStatus } = require('./sockets/socketHandler');
 const Device = require('./models/Device');
 const { startSimulation } = require('./services/simulationService');
+const { seedData } = require('./utils/seed');
 
 const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
@@ -42,20 +43,30 @@ const startServer = async () => {
   try {
     await connectDB();
 
-    server.listen(PORT, () => {
+    // Auto-seed if database is empty
+    const deviceCount = await Device.countDocuments();
+    if (deviceCount === 0) {
+      console.log('📦 Empty database detected. Auto-seeding initial development data...');
+      await seedData(false);
+    }
+
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`=================================================`);
       console.log(`🛡️  ResQ IoT Emergency Monitoring Platform Backend`);
-      console.log(`🚀 Server running on port: ${PORT}`);
+      console.log(`🚀 Server running on port: ${PORT} (0.0.0.0)`);
       console.log(`📡 Real-time Socket.IO initialized`);
-      console.log(`🌐 API Base: http://localhost:${PORT}/api`);
+      console.log(`🌐 Health check: http://0.0.0.0:${PORT}/health`);
       console.log(`=================================================`);
 
       // Start device heartbeat watcher
       startDeviceHeartbeatMonitor();
 
-      // Start automatic simulation if enabled
+      // Start automatic simulation only if explicitly enabled
       if (process.env.AUTO_SIMULATION === 'true') {
+        console.log('🤖 Auto-simulation active (AUTO_SIMULATION=true)');
         startSimulation(3000);
+      } else {
+        console.log('📡 Hardware Ingestion Mode: waiting for live telemetry from NodeMCU / ESP8266 devices');
       }
     });
   } catch (error) {

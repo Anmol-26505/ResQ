@@ -130,15 +130,30 @@ void transmitTelemetry() {
 
   const jsonPayload = `{
   "deviceId": "RESQ-NODE-01",
-  "temperature": 28.5,
-  "humidity": 65.0,
-  "sensors": {
-    "gas": 142,
-    "flame": false
+  "temperature": 26.5,
+  "humidity": 52.0,
+  "gas": 140,
+  "smoke": 140,
+  "flame": false,
+  "tilt": false,
+  "tiltAngle": 3.2,
+  "earthquake": false,
+  "vibration": 0.08,
+  "water": false,
+  "waterLevel": 0,
+  "distance": 84.5,
+  "personCount": 3,
+  "mpu6050": {
+    "ax": 0.02,
+    "ay": 0.05,
+    "az": 0.99,
+    "gx": 0.4,
+    "gy": 0.2,
+    "gz": -0.1
   },
   "rssi": -58,
-  "firmwareVersion": "1.2.0-esp8266",
-  "timestamp": "2026-10-29T09:30:00.000Z"
+  "firmwareVersion": "1.3.0-esp8266",
+  "timestamp": "2026-11-12T09:30:00.000Z"
 }`;
 
   const handleCopy = (text) => {
@@ -290,6 +305,36 @@ void transmitTelemetry() {
                       <td className="py-2.5 px-4 font-mono">DOUT (Digital)</td>
                       <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D1 (GPIO5)</td>
                       <td className="py-2.5 px-4">Active-low infrared flame detector (LOW = Fire)</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2.5 px-4 font-medium text-slate-900">SW-420 Tilt / Earthquake</td>
+                      <td className="py-2.5 px-4 font-mono">DOUT (Digital)</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D5 (GPIO14)</td>
+                      <td className="py-2.5 px-4">Seismic tremor, vibration & structural tilt sensor</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2.5 px-4 font-medium text-slate-900">Water Leak / Flood Probe</td>
+                      <td className="py-2.5 px-4 font-mono">DOUT / AOUT</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D6 (GPIO12)</td>
+                      <td className="py-2.5 px-4">Liquid immersion & floor flood detection</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2.5 px-4 font-medium text-slate-900">PIR Person Motion / Count</td>
+                      <td className="py-2.5 px-4 font-mono">OUT (Digital)</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D7 (GPIO13)</td>
+                      <td className="py-2.5 px-4">Human occupancy & room movement detection</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2.5 px-4 font-medium text-slate-900">MPU-6050 Accel & Gyro</td>
+                      <td className="py-2.5 px-4 font-mono">SDA / SCL (I2C)</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D2 / D1 (GPIO4/5)</td>
+                      <td className="py-2.5 px-4">3-axis accelerometer, gyroscope & structural tilt angle</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2.5 px-4 font-medium text-slate-900">HC-SR04 Ultrasonic</td>
+                      <td className="py-2.5 px-4 font-mono">TRIG / ECHO</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D3 / D4 (GPIO0/2)</td>
+                      <td className="py-2.5 px-4">Precision distance measurement (cm) & water level</td>
                     </tr>
                   </tbody>
                 </table>

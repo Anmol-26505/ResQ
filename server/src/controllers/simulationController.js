@@ -30,10 +30,26 @@ const toggleSimulation = async (req, res, next) => {
 const setSimulationScenario = async (req, res, next) => {
   try {
     const { scenario } = req.body;
-    if (!['nominal', 'gas_leak', 'fire_hazard', 'high_heat'].includes(scenario)) {
+    const validScenarios = [
+      'nominal',
+      'fire_hazard',
+      'fire',
+      'smoke_leak',
+      'smoke',
+      'gas_leak',
+      'earthquake',
+      'tilt',
+      'water_leak',
+      'water',
+      'crowded_room',
+      'person_count',
+      'high_heat',
+      'all_hazards',
+    ];
+    if (!validScenarios.includes(scenario)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid scenario. Allowed: nominal, gas_leak, fire_hazard, high_heat',
+        message: `Invalid scenario. Allowed: ${validScenarios.join(', ')}`,
       });
     }
 

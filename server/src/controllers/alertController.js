@@ -1,6 +1,7 @@
 const Alert = require('../models/Alert');
 const AlertRule = require('../models/AlertRule');
-const { broadcastAlertUpdated } = require('../sockets/socketHandler');
+const Device = require('../models/Device');
+const { broadcastAlert, broadcastAlertUpdated } = require('../sockets/socketHandler');
 
 // @desc    Get all alerts with filtering & pagination
 // @route   GET /api/alerts
@@ -101,12 +102,14 @@ const acknowledgeAlert = async (req, res, next) => {
     }
 
     alert.status = 'acknowledged';
-    alert.acknowledgedBy = req.user._id;
+    alert.acknowledgedBy = req.user ? req.user._id : null;
     alert.acknowledgedAt = new Date();
     if (note) alert.acknowledgeNotes = note.trim();
 
     await alert.save();
-    await alert.populate('acknowledgedBy', 'name email');
+    if (alert.acknowledgedBy) {
+      await alert.populate('acknowledgedBy', 'name email');
+    }
 
     broadcastAlertUpdated(alert);
 
@@ -268,11 +271,66 @@ const deleteAlertRule = async (req, res, next) => {
   }
 };
 
+// @desc    Receive and process an alert (e.g. from edge NodeMCU or operator)
+// @route   POST /api/alerts
+// @access  Public / Optional Protect
+const createManualAlert = async (req, res, next) => {
+  try {
+    const {
+      deviceId = 'RESQ-NODE-01',
+      title,
+      message,
+      severity = 'warning',
+      sensorType = 'general',
+      readingValue,
+      thresholdValue,
+    } = req.body;
+
+    if (!title && !sensorType) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title or sensorType is required to trigger an alert',
+      });
+    }
+
+    const devUpper = String(deviceId).toUpperCase();
+    const device = await Device.findOne({ deviceId: devUpper });
+
+    const alertTitle = title || `Emergency Alert: ${sensorType.toUpperCase()} Detected`;
+    const alertMessage = message || `Hazard threshold triggered for ${sensorType} on device ${devUpper}`;
+
+    const alert = await Alert.create({
+      deviceId: devUpper,
+      device: device ? device._id : null,
+      title: alertTitle,
+      message: alertMessage,
+      severity: ['warning', 'critical'].includes(severity) ? severity : 'warning',
+      status: 'active',
+      sensorType: String(sensorType).toLowerCase(),
+      readingValue: readingValue !== undefined ? readingValue : 'HAZARD_TRIGGERED',
+      thresholdValue: thresholdValue !== undefined ? thresholdValue : 'SAFETY_LIMIT',
+      timestamp: new Date(),
+    });
+
+    // Broadcast in real-time to all connected dashboards via Socket.IO
+    broadcastAlert(alert);
+
+    res.status(201).json({
+      success: true,
+      message: 'Alert received, recorded, and broadcast in real-time',
+      alert,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAlerts,
   getAlertById,
   acknowledgeAlert,
   resolveAlert,
+  createManualAlert,
   getAlertRules,
   createAlertRule,
   updateAlertRule,

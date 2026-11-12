@@ -25,9 +25,55 @@ const sensorReadingSchema = new mongoose.Schema(
       type: Number,
       default: null,
     },
+    smoke: {
+      type: Number,
+      default: null,
+    },
     flame: {
       type: Boolean,
       default: false,
+    },
+    tilt: {
+      type: Boolean,
+      default: false,
+    },
+    earthquake: {
+      type: Boolean,
+      default: false,
+    },
+    vibration: {
+      type: Number,
+      default: 0,
+    },
+    water: {
+      type: Boolean,
+      default: false,
+    },
+    waterLevel: {
+      type: Number,
+      default: 0,
+    },
+    personCount: {
+      type: Number,
+      default: 0,
+    },
+    distance: {
+      type: Number,
+      default: null, // Ultrasonic distance in cm
+    },
+    tiltAngle: {
+      type: Number,
+      default: null, // Tilt angle in degrees
+    },
+    mpu6050: {
+      ax: { type: Number, default: null },
+      ay: { type: Number, default: null },
+      az: { type: Number, default: null },
+      gx: { type: Number, default: null },
+      gy: { type: Number, default: null },
+      gz: { type: Number, default: null },
+      pitch: { type: Number, default: null },
+      roll: { type: Number, default: null },
     },
     rawSensors: {
       type: Map,

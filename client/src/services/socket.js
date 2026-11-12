@@ -2,17 +2,29 @@ import { io } from 'socket.io-client';
 
 let socket = null;
 
+// Centralized Socket URL resolver:
+// Uses VITE_SOCKET_URL if set, or derives the root host from VITE_API_BASE_URL / VITE_API_URL
+const resolveSocketUrl = () => {
+  if (import.meta.env.VITE_SOCKET_URL && import.meta.env.VITE_SOCKET_URL.trim()) {
+    return import.meta.env.VITE_SOCKET_URL.trim().replace(/\/+$/, '');
+  }
+  const apiUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+  if (apiUrl && apiUrl.trim()) {
+    const clean = apiUrl.trim().replace(/\/+$/, '');
+    return clean.replace(/\/api$/, '');
+  }
+  return import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin;
+};
+
 export const getSocket = () => {
   if (!socket) {
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || (
-      import.meta.env.DEV ? 'http://localhost:5000' : window.location.origin
-    );
+    const socketUrl = resolveSocketUrl();
 
     socket = io(socketUrl, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnection: true,
-      reconnectionAttempts: 20,
+      reconnectionAttempts: 25,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
     });

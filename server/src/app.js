@@ -23,21 +23,39 @@ app.use(helmet({
 }));
 
 // CORS configuration
-const allowedOrigins = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
-  : ['http://localhost:5173', 'http://localhost:3000'];
+const parseOrigins = () => {
+  const defaults = ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:4173'];
+  const fromEnv = [
+    ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : []),
+    ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map((o) => o.trim()) : []),
+  ];
+  return Array.from(new Set([...defaults, ...fromEnv].filter(Boolean)));
+};
+
+const allowedOrigins = parseOrigins();
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g. mobile apps, curl, ESP8266)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow non-browser requests (NodeMCU / ESP8266, curl, mobile apps, Postman)
+    if (!origin) {
       return callback(null, true);
     }
-    return callback(null, true); // Permissive in dev, or use origin match
+    // Allow wildcard, explicit allowed origins, or Render/Vercel/Netlify preview domains
+    if (
+      allowedOrigins.includes('*') ||
+      allowedOrigins.includes(origin) ||
+      origin.endsWith('.onrender.com') ||
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.netlify.app')
+    ) {
+      return callback(null, true);
+    }
+    // Permissive fallback so production frontend is not blocked on initial setup
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-device-key'],
 }));
 
 // Request body parsers
@@ -49,17 +67,20 @@ if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Health check endpoint (Public)
-app.get('/api/health', (req, res) => {
-  res.json({
+// Health check endpoints (Public - for Render, AWS, uptime monitors)
+const healthHandler = (req, res) => {
+  res.status(200).json({
     status: 'healthy',
     system: 'ResQ IoT Emergency Platform',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    uptime: Math.floor(process.uptime()),
     environment: process.env.NODE_ENV || 'development',
     version: '1.0.0',
   });
-});
+};
+
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
 
 // Apply rate limiter to general api endpoints
 app.use('/api', apiLimiter);

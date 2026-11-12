@@ -9,9 +9,9 @@ const Navbar = () => {
   const { isAuthenticated, user } = useAuth();
 
   const navLinks = [
-    { name: 'Home', path: '/' },
+    { name: 'Live Detections', path: '/' },
     { name: 'How It Works', path: '/how-it-works' },
-    { name: 'About ResQ', path: '/about' },
+    { name: 'About System', path: '/about' },
   ];
 
   const isActive = (path) => location.pathname === path;

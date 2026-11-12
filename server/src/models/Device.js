@@ -30,7 +30,7 @@ const deviceSchema = new mongoose.Schema(
     },
     supportedSensors: {
       type: [String],
-      default: ['temperature', 'humidity', 'gas', 'flame'],
+      default: ['temperature', 'humidity', 'gas', 'smoke', 'flame', 'tilt', 'earthquake', 'water', 'personCount', 'distance', 'mpu6050', 'ultrasonic', 'mq2'],
     },
     apiKey: {
       type: String,
@@ -53,7 +53,24 @@ const deviceSchema = new mongoose.Schema(
       temperature: Number,
       humidity: Number,
       gas: Number,
+      smoke: Number,
       flame: Boolean,
+      tilt: Boolean,
+      earthquake: Boolean,
+      vibration: Number,
+      water: Boolean,
+      waterLevel: Number,
+      personCount: Number,
+      distance: Number,
+      tiltAngle: Number,
+      mpu6050: {
+        ax: Number,
+        ay: Number,
+        az: Number,
+        gx: Number,
+        gy: Number,
+        gz: Number,
+      },
       timestamp: Date,
     },
     isActive: {

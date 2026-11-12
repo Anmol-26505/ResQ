@@ -3,13 +3,32 @@ const { Server } = require('socket.io');
 let io = null;
 
 const initSocket = (httpServer) => {
-  const allowedOrigins = process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
-    : ['http://localhost:5173', 'http://localhost:3000'];
+  const parseOrigins = () => {
+    const defaults = ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:4173'];
+    const fromEnv = [
+      ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : []),
+      ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map((o) => o.trim()) : []),
+    ];
+    return Array.from(new Set([...defaults, ...fromEnv].filter(Boolean)));
+  };
+
+  const allowedOrigins = parseOrigins();
 
   io = new Server(httpServer, {
     cors: {
-      origin: allowedOrigins,
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (
+          allowedOrigins.includes('*') ||
+          allowedOrigins.includes(origin) ||
+          origin.endsWith('.onrender.com') ||
+          origin.endsWith('.vercel.app') ||
+          origin.endsWith('.netlify.app')
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, true);
+      },
       methods: ['GET', 'POST', 'PATCH', 'DELETE'],
       credentials: true,
     },

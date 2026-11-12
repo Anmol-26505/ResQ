@@ -5,19 +5,22 @@ const {
   getAlertById,
   acknowledgeAlert,
   resolveAlert,
+  createManualAlert,
   getAlertRules,
   createAlertRule,
   updateAlertRule,
   deleteAlertRule,
 } = require('../controllers/alertController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, optionalProtect } = require('../middleware/authMiddleware');
 
+// Incidents & Alerts (Publicly viewable, reportable & acknowledgeable)
+router.get('/', optionalProtect, getAlerts);
+router.post('/', optionalProtect, createManualAlert);
+router.get('/:id', optionalProtect, getAlertById);
+router.patch('/:id/acknowledge', optionalProtect, acknowledgeAlert);
+
+// Protected routes
 router.use(protect);
-
-// Incidents & Alerts
-router.get('/', getAlerts);
-router.get('/:id', getAlertById);
-router.patch('/:id/acknowledge', acknowledgeAlert);
 router.patch('/:id/resolve', resolveAlert);
 
 // Alert Rules

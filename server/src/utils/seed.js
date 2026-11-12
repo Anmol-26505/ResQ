@@ -7,10 +7,12 @@ const SensorReading = require('../models/SensorReading');
 const Alert = require('../models/Alert');
 const AlertRule = require('../models/AlertRule');
 
-const seedData = async () => {
+const seedData = async (isStandalone = false) => {
   try {
     console.log('🌱 Starting ResQ Seed Routine...');
-    await connectDB();
+    if (isStandalone) {
+      await connectDB();
+    }
 
     // Clear existing collections
     console.log('🧹 Cleaning existing data collections...');
@@ -61,6 +63,50 @@ const seedData = async () => {
         isEnabled: true,
       },
       {
+        name: 'Earthquake & Structural Tilt Alert',
+        description: 'Seismic tilt and vibration sensor detected structural shift or tremor',
+        deviceId: 'ALL',
+        sensorType: 'earthquake',
+        operator: '==',
+        thresholdValue: true,
+        severity: 'critical',
+        cooldownMinutes: 5,
+        isEnabled: true,
+      },
+      {
+        name: 'Critical Water Leak / Flood Detection',
+        description: 'Water probe sensor detected liquid accumulation on facility floor',
+        deviceId: 'ALL',
+        sensorType: 'water',
+        operator: '==',
+        thresholdValue: true,
+        severity: 'critical',
+        cooldownMinutes: 5,
+        isEnabled: true,
+      },
+      {
+        name: 'Room Overcrowding Hazard',
+        description: 'Person count exceeded safe room occupancy limit',
+        deviceId: 'ALL',
+        sensorType: 'personCount',
+        operator: '>',
+        thresholdValue: 10,
+        severity: 'warning',
+        cooldownMinutes: 10,
+        isEnabled: true,
+      },
+      {
+        name: 'Toxic Smoke & Gas Level',
+        description: 'MQ-2 / MQ-135 sensor detected toxic smoke concentration',
+        deviceId: 'ALL',
+        sensorType: 'smoke',
+        operator: '>',
+        thresholdValue: 200,
+        severity: 'critical',
+        cooldownMinutes: 5,
+        isEnabled: true,
+      },
+      {
         name: 'Critical High Temperature',
         description: 'Thermal sensor detected ambient heat exceeding safety thresholds',
         deviceId: 'ALL',
@@ -73,24 +119,13 @@ const seedData = async () => {
       },
       {
         name: 'Elevated Heat Warning',
-        description: 'Temperature rising above normal HVAC operating limits',
+        description: 'Temperature rising above normal operating limits',
         deviceId: 'ALL',
         sensorType: 'temperature',
         operator: '>',
         thresholdValue: 36,
         severity: 'warning',
         cooldownMinutes: 10,
-        isEnabled: true,
-      },
-      {
-        name: 'Critical Gas / Smoke Level',
-        description: 'MQ-2 / MQ-135 sensor detected toxic gas or thick smoke concentration',
-        deviceId: 'ALL',
-        sensorType: 'gas',
-        operator: '>',
-        thresholdValue: 300,
-        severity: 'critical',
-        cooldownMinutes: 5,
         isEnabled: true,
       },
       {
@@ -126,7 +161,7 @@ const seedData = async () => {
         name: 'Server Room Alpha Node',
         location: 'Data Center Bld 4, Rack 12-A',
         deviceType: 'NodeMCU ESP8266',
-        supportedSensors: ['temperature', 'humidity', 'gas', 'flame'],
+        supportedSensors: ['temperature', 'humidity', 'gas', 'smoke', 'flame', 'tilt', 'earthquake', 'water', 'personCount'],
         apiKey: 'resq_dev_node01_alpha_9882a1',
         status: 'online',
         lastSeenAt: now,
@@ -134,7 +169,14 @@ const seedData = async () => {
           temperature: 24.2,
           humidity: 46.5,
           gas: 68,
+          smoke: 52,
           flame: false,
+          tilt: false,
+          earthquake: false,
+          vibration: 0.04,
+          water: false,
+          waterLevel: 0,
+          personCount: 3,
           timestamp: now,
         },
         metadata: {
@@ -151,7 +193,7 @@ const seedData = async () => {
         name: 'Chemical Storage Enclosure',
         location: 'Hazardous Materials Bay 2',
         deviceType: 'NodeMCU ESP8266',
-        supportedSensors: ['temperature', 'humidity', 'gas', 'flame'],
+        supportedSensors: ['temperature', 'humidity', 'gas', 'smoke', 'flame', 'tilt', 'earthquake', 'water', 'personCount'],
         apiKey: 'resq_dev_node02_beta_4419b2',
         status: 'online',
         lastSeenAt: new Date(now.getTime() - 20000),
@@ -159,7 +201,14 @@ const seedData = async () => {
           temperature: 21.8,
           humidity: 52.0,
           gas: 85,
+          smoke: 60,
           flame: false,
+          tilt: false,
+          earthquake: false,
+          vibration: 0.02,
+          water: false,
+          waterLevel: 0,
+          personCount: 1,
           timestamp: new Date(now.getTime() - 20000),
         },
         metadata: {
@@ -223,7 +272,14 @@ const seedData = async () => {
           temperature: temp1,
           humidity: hum1,
           gas: gas1,
+          smoke: Math.round(gas1 * 0.8),
           flame: false,
+          tilt: false,
+          earthquake: false,
+          vibration: 0.04,
+          water: false,
+          waterLevel: 0,
+          personCount: 3,
           isSimulated: true,
           signalRssi: -55 + Math.floor((Math.random() - 0.5) * 6),
           batteryLevel: 99,
@@ -240,7 +296,14 @@ const seedData = async () => {
           temperature: temp2,
           humidity: hum2,
           gas: gas2,
+          smoke: Math.round(gas2 * 0.8),
           flame: false,
+          tilt: false,
+          earthquake: false,
+          vibration: 0.03,
+          water: false,
+          waterLevel: 0,
+          personCount: 1,
           isSimulated: true,
           signalRssi: -62 + Math.floor((Math.random() - 0.5) * 8),
           batteryLevel: 95,
@@ -319,12 +382,22 @@ const seedData = async () => {
     console.log('  RESQ-NODE-03: resq_dev_node03_gamma_7720c3');
     console.log('=============================================');
 
-    await disconnectDB();
-    process.exit(0);
+    if (isStandalone) {
+      await disconnectDB();
+      process.exit(0);
+    }
+    return true;
   } catch (err) {
     console.error('❌ Error during seeding:', err);
-    process.exit(1);
+    if (isStandalone) {
+      process.exit(1);
+    }
+    throw err;
   }
 };
 
-seedData();
+if (require.main === module) {
+  seedData(true);
+}
+
+module.exports = { seedData };

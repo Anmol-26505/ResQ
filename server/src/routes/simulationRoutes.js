@@ -5,10 +5,8 @@ const {
   setSimulationScenario,
   getSimulationStatus,
 } = require('../controllers/simulationController');
-const { protect } = require('../middleware/authMiddleware');
 
-router.use(protect);
-
+// Publicly accessible for interactive demo on the Home page
 router.get('/status', getSimulationStatus);
 router.post('/toggle', toggleSimulation);
 router.post('/scenario', setSimulationScenario);

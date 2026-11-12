@@ -28,11 +28,15 @@ describe('ResQ Backend API Suite', () => {
     await disconnectDB();
   });
 
-  test('1. Health check returns healthy status', async () => {
-    const res = await request(app).get('/api/health');
-    assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'healthy');
-    assert.equal(res.body.version, '1.0.0');
+  test('1. Health check returns healthy status on /api/health and /health', async () => {
+    const resApi = await request(app).get('/api/health');
+    assert.equal(resApi.status, 200);
+    assert.equal(resApi.body.status, 'healthy');
+    assert.equal(resApi.body.version, '1.0.0');
+
+    const resRoot = await request(app).get('/health');
+    assert.equal(resRoot.status, 200);
+    assert.equal(resRoot.body.status, 'healthy');
   });
 
   test('2. User registration generates valid JWT', async () => {
@@ -191,5 +195,84 @@ describe('ResQ Backend API Suite', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.alert.status, 'acknowledged');
     assert.equal(res.body.alert.acknowledgeNotes, 'Field technician inspecting overheating server.');
+  });
+
+  test('12. Ingest NodeMCU payload with MPU6050, Ultrasonic, and MQ2', async () => {
+    const res = await request(app)
+      .post('/api/iot/readings')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        temperature: 26.2,
+        humidity: 48.0,
+        mq2: 145,
+        flame: false,
+        ax: 0.05,
+        ay: 0.12,
+        az: 0.98,
+        gx: 1.2,
+        gy: 0.8,
+        gz: -0.4,
+        tiltAngle: 4.5,
+        distance: 75.3,
+        water: false,
+        personCount: 2,
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.readingId);
+
+    // Verify reading stored MPU6050 and distance
+    const saved = await SensorReading.findById(res.body.readingId);
+    assert.ok(saved);
+    assert.equal(saved.gas, 145);
+    assert.equal(saved.distance, 75.3);
+    assert.equal(saved.tiltAngle, 4.5);
+    assert.equal(saved.mpu6050.az, 0.98);
+  });
+
+  test('13. GET /api/iot/latest retrieves latest sensor readings', async () => {
+    const res = await request(app)
+      .get(`/api/iot/latest?deviceId=${testDeviceId}`);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.deviceId, testDeviceId);
+    assert.ok(res.body.reading);
+    assert.equal(res.body.reading.distance, 75.3);
+  });
+
+  test('14. GET /api/iot/hazard-status retrieves consolidated hazard status', async () => {
+    const res = await request(app).get('/api/iot/hazard-status');
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.hazards);
+    assert.ok(res.body.hazards.fire);
+    assert.ok(res.body.hazards.smokeAndGas);
+    assert.ok(res.body.hazards.earthquake);
+    assert.ok(res.body.hazards.tilt);
+    assert.ok(res.body.hazards.waterLeakage);
+    assert.ok(res.body.hazards.occupancy);
+  });
+
+  test('15. POST /api/alerts receives and processes manual/edge alert', async () => {
+    const res = await request(app)
+      .post('/api/alerts')
+      .send({
+        deviceId: testDeviceId,
+        title: 'Emergency Earthquake Detection',
+        message: 'High amplitude seismic shock registered by accelerometer',
+        severity: 'critical',
+        sensorType: 'earthquake',
+        readingValue: 2.8,
+        thresholdValue: 1.2,
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.alert.severity, 'critical');
+    assert.equal(res.body.alert.sensorType, 'earthquake');
   });
 });

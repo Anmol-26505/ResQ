@@ -8,19 +8,18 @@ const {
   regenerateApiKey,
   deleteDevice,
 } = require('../controllers/deviceController');
-const { protect, adminOnly } = require('../middleware/authMiddleware');
+const { protect, optionalProtect, adminOnly } = require('../middleware/authMiddleware');
 
+// Public read access for Home Page room/device selection
+router.get('/', optionalProtect, getDevices);
+router.get('/:id', optionalProtect, getDeviceById);
+
+// Protected mutation routes
 router.use(protect);
 
-router.route('/')
-  .get(getDevices)
-  .post(createDevice);
-
-router.route('/:id')
-  .get(getDeviceById)
-  .patch(updateDevice)
-  .delete(adminOnly, deleteDevice);
-
+router.post('/', createDevice);
+router.patch('/:id', updateDevice);
+router.delete('/:id', adminOnly, deleteDevice);
 router.post('/:id/regenerate-key', regenerateApiKey);
 
 module.exports = router;

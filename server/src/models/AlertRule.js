@@ -20,7 +20,7 @@ const alertRuleSchema = new mongoose.Schema(
     sensorType: {
       type: String,
       required: true,
-      enum: ['temperature', 'gas', 'flame', 'humidity'],
+      enum: ['temperature', 'gas', 'smoke', 'flame', 'humidity', 'tilt', 'earthquake', 'water', 'personCount'],
     },
     operator: {
       type: String,
