@@ -275,4 +275,44 @@ describe('ResQ Backend API Suite', () => {
     assert.equal(res.body.alert.severity, 'critical');
     assert.equal(res.body.alert.sensorType, 'earthquake');
   });
+
+  test('16. POST /api/sensors/update receives NodeMCU 5-sensor live payload', async () => {
+    const res = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        gas: 155,
+        smoke: 155,
+        flame: false,
+        distance: 42.6,
+        tiltAngle: 2.8,
+        vibration: 0.08,
+        tilt: false,
+        earthquake: false,
+        water: false,
+        ax: 0.02,
+        ay: 0.05,
+        az: 0.99,
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.readingId);
+
+    const saved = await SensorReading.findById(res.body.readingId);
+    assert.ok(saved);
+    assert.equal(saved.distance, 42.6);
+    assert.equal(saved.gas, 155);
+    assert.equal(saved.tiltAngle, 2.8);
+  });
+
+  test('17. GET /api/sensors/latest returns current live telemetry', async () => {
+    const res = await request(app).get('/api/sensors/latest');
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.latestReading);
+    assert.equal(res.body.latestReading.distance, 42.6);
+  });
 });

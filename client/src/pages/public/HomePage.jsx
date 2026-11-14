@@ -110,6 +110,50 @@ const HomePage = () => {
     }
   }, [recentAlerts]);
 
+  // Automatic 2-second synchronization hook querying GET /api/sensors/latest
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const [sensorRes, alertsRes] = await Promise.all([
+          api.get('/sensors/latest'),
+          api.get('/alerts?status=active&limit=10'),
+        ]);
+
+        if (sensorRes.data?.success) {
+          const freshReading = sensorRes.data.latestReading || sensorRes.data.reading;
+          if (freshReading) {
+            setTelemetryHistory((prev) => {
+              if (prev.length === 0 || !prev[0]?.timestamp) {
+                return [freshReading];
+              }
+              const prevTime = new Date(prev[0].timestamp).getTime();
+              const freshTime = new Date(freshReading.timestamp).getTime();
+              if (freshTime > prevTime) {
+                return [freshReading, ...prev.slice(0, 14)];
+              }
+              return prev;
+            });
+          }
+
+          if (sensorRes.data.devices && sensorRes.data.devices.length > 0) {
+            setDevices(sensorRes.data.devices);
+            if (!selectedDeviceId) {
+              setSelectedDeviceId(sensorRes.data.devices[0].deviceId);
+            }
+          }
+        }
+
+        if (alertsRes.data?.success) {
+          setActiveAlerts(alertsRes.data.alerts);
+        }
+      } catch (err) {
+        // Silent polling catch to avoid intrusive console errors during network blips
+      }
+    }, 2000);
+
+    return () => clearInterval(pollInterval);
+  }, [selectedDeviceId]);
+
   // Switch selected room/device
   const handleSelectDevice = async (devId) => {
     setSelectedDeviceId(devId);
@@ -145,17 +189,24 @@ const HomePage = () => {
   const gas = currentData.gas !== undefined && currentData.gas !== null ? currentData.gas : 65;
   const smoke = currentData.smoke !== undefined && currentData.smoke !== null ? currentData.smoke : Math.round(gas * 0.85);
   const tiltDetected = Boolean(currentData.tilt);
+  const tiltAngle = currentData.tiltAngle !== undefined && currentData.tiltAngle !== null ? currentData.tiltAngle : null;
   const earthquakeDetected = Boolean(currentData.earthquake);
   const vibration = currentData.vibration !== undefined && currentData.vibration !== null ? currentData.vibration : 0.04;
   const waterDetected = Boolean(currentData.water);
   const waterLevel = currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : 0;
+  const distance = currentData.distance !== undefined && currentData.distance !== null ? currentData.distance : null;
   const personCount = currentData.personCount !== undefined && currentData.personCount !== null ? currentData.personCount : 3;
+
+  const isDeviceOnline = selectedDevice?.status === 'online' || (currentData.timestamp && (Date.now() - new Date(currentData.timestamp).getTime()) < 60000);
+  const lastTimestamp = currentData.timestamp
+    ? new Date(currentData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : (selectedDevice?.lastSeenAt ? new Date(selectedDevice.lastSeenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Awaiting live stream');
 
   // Hazard conditions
   const isFireHazard = flameDetected || temp > 50;
   const isSmokeHazard = smoke > 200 || gas > 200;
-  const isTiltHazard = tiltDetected || earthquakeDetected || vibration > 1.5;
-  const isWaterHazard = waterDetected || waterLevel > 40;
+  const isTiltHazard = tiltDetected || earthquakeDetected || vibration > 1.5 || (tiltAngle !== null && Math.abs(tiltAngle) > 15);
+  const isWaterHazard = waterDetected || waterLevel > 40 || (distance !== null && distance < 12);
   const isPersonHazard = personCount > 10;
 
   const anyHazardActive = isFireHazard || isSmokeHazard || isTiltHazard || isWaterHazard || isPersonHazard || activeAlerts.length > 0;
@@ -178,7 +229,7 @@ const HomePage = () => {
       {/* 1. Header & Live System Status */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
               IoT Emergency Detection Hub
             </h1>
@@ -192,9 +243,25 @@ const HomePage = () => {
               <span className={`w-2 h-2 rounded-full ${anyHazardActive ? 'bg-rose-600' : 'bg-emerald-500'}`} />
               {anyHazardActive ? 'Hazards Active' : 'All Detections Safe'}
             </span>
+
+            {/* Device Online/Offline Live Badge */}
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                isDeviceOnline
+                  ? 'bg-teal-50 text-teal-800 border border-teal-300'
+                  : 'bg-slate-100 text-slate-600 border border-slate-300'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isDeviceOnline ? 'bg-teal-500 animate-ping' : 'bg-slate-400'}`} />
+              {isDeviceOnline ? 'Hardware Online' : 'Hardware Standby'}
+            </span>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Real-time multi-hazard telemetry monitoring directly from NodeMCU ESP8266 IoT nodes.
+
+          <p className="text-xs sm:text-sm text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+            <span>Real-time multi-hazard telemetry monitoring directly from NodeMCU ESP8266 IoT nodes.</span>
+            <span className="font-mono text-teal-700 bg-teal-50 px-2 py-0.5 rounded font-medium text-[11px]">
+              Last Reading: {lastTimestamp}
+            </span>
           </p>
         </div>
 
@@ -510,7 +577,7 @@ const HomePage = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-base">Tilt & Earthquake</h3>
-                  <span className="text-[11px] text-slate-500 font-medium">SW-420 / Seismic Sensor (D5)</span>
+                  <span className="text-[11px] text-slate-500 font-medium">MPU6050 6-Axis Accel / Gyro (D2/D1)</span>
                 </div>
               </div>
 
@@ -527,40 +594,42 @@ const HomePage = () => {
 
             {/* Seismic Status Callout */}
             <div className="my-5 p-4 rounded-2xl bg-white/80 border border-slate-200/80 shadow-sm text-center">
-              <span className="text-xs text-slate-400 font-semibold uppercase block">Structural Vibration Intensity</span>
+              <span className="text-xs text-slate-400 font-semibold uppercase block">MPU6050 Structural Tilt & Vibration</span>
               <div
                 className={`text-3xl font-black font-mono mt-1 ${
-                  vibration > 1.5 ? 'text-orange-600 animate-pulse' : 'text-emerald-600'
+                  vibration > 0.35 || isTiltHazard ? 'text-orange-600 animate-pulse' : 'text-emerald-600'
                 }`}
               >
-                {vibration} <span className="text-base font-bold">g</span>
+                {tiltAngle !== null ? `${tiltAngle}° Tilt` : (vibration > 0 ? `${vibration} g` : '0° Upright')}
               </div>
               <span className="text-[11px] text-slate-500 mt-1 block">
-                {isTiltHazard ? '⚠️ Abnormal structural tilt angle & tremor detected!' : 'Foundation upright & vibration nominal (0° Tilt)'}
+                {isTiltHazard
+                  ? '⚠️ Seismic tremor or foundation tilt angle detected!'
+                  : `Vibration: ${vibration} g • Foundation stable & upright`}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">Tilt Sensor</span>
-                <span className={`text-base font-bold font-mono ${tiltDetected ? 'text-orange-600' : 'text-emerald-700'}`}>
-                  {tiltDetected ? 'TILTED' : 'UPRIGHT'}
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">Tilt Angle</span>
+                <span className={`text-base font-bold font-mono ${tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) > 15) ? 'text-orange-600' : 'text-emerald-700'}`}>
+                  {tiltAngle !== null ? `${tiltAngle}°` : (tiltDetected ? 'TILTED' : '0.0°')}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">Tremor Limit</span>
-                <span className="text-base font-bold font-mono text-slate-700">&lt; 1.5 g</span>
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">Seismic Shock</span>
+                <span className="text-base font-bold font-mono text-slate-700">{vibration} g</span>
               </div>
             </div>
           </div>
 
           <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
             <span>Structural Safety: {isTiltHazard ? 'Inspection Required' : 'Certified Level'}</span>
-            <span className="font-semibold text-slate-700">Digital Pin D5</span>
+            <span className="font-semibold text-slate-700">I2C Pins D2/D1</span>
           </div>
         </div>
 
-        {/* SECTION 4: WATER & FLOOD DETECTION */}
+        {/* SECTION 4: WATER & ULTRASONIC DISTANCE */}
         <div
           className={`p-6 rounded-3xl border transition-all shadow-card flex flex-col justify-between ${
             isWaterHazard
@@ -579,8 +648,8 @@ const HomePage = () => {
                   <Droplets className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-base">Water Detection</h3>
-                  <span className="text-[11px] text-slate-500 font-medium">Flood Probe Sensor (GPIO12 / D6)</span>
+                  <h3 className="font-bold text-slate-900 text-base">Water & Distance</h3>
+                  <span className="text-[11px] text-slate-500 font-medium">HC-SR04 Ultrasonic (D6/D7)</span>
                 </div>
               </div>
 
@@ -591,44 +660,46 @@ const HomePage = () => {
                     : 'bg-emerald-100 text-emerald-800'
                 }`}
               >
-                {isWaterHazard ? 'Water Leak Alert!' : 'Dry & Safe'}
+                {isWaterHazard ? 'Water Leak Alert!' : 'Dry & Normal'}
               </span>
             </div>
 
-            {/* Water Status Callout */}
+            {/* Water & Distance Status Callout */}
             <div className="my-5 p-4 rounded-2xl bg-white/80 border border-slate-200/80 shadow-sm text-center">
-              <span className="text-xs text-slate-400 font-semibold uppercase block">Water Accumulation</span>
+              <span className="text-xs text-slate-400 font-semibold uppercase block">Ultrasonic Distance / Water Level</span>
               <div
                 className={`text-3xl font-black font-mono mt-1 ${
-                  waterDetected || waterLevel > 0 ? 'text-cyan-600 animate-pulse' : 'text-emerald-600'
+                  isWaterHazard ? 'text-cyan-600 animate-pulse' : 'text-emerald-600'
                 }`}
               >
-                {waterLevel > 0 ? `${waterLevel}%` : (waterDetected ? 'LEAK DETECTED' : '0% DRY')}
+                {distance !== null ? `${distance} cm` : (waterLevel > 0 ? `${waterLevel}%` : (waterDetected ? 'LEAK DETECTED' : 'DRY'))}
               </div>
               <span className="text-[11px] text-slate-500 mt-1 block">
-                {isWaterHazard ? '💧 Liquid contact confirmed on floor probe!' : 'Conductive probe dry; no flood risk'}
+                {distance !== null
+                  ? `Echo distance: ${distance} cm • ${isWaterHazard ? '⚠️ Liquid level high!' : 'Surface distance normal'}`
+                  : (isWaterHazard ? '💧 Liquid accumulation detected on floor!' : 'Floor dry; liquid level nominal')}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">Probe State</span>
-                <span className={`text-base font-bold font-mono ${waterDetected ? 'text-cyan-600' : 'text-emerald-700'}`}>
-                  {waterDetected ? 'SUBMERGED' : 'DRY'}
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">Ultrasonic Range</span>
+                <span className={`text-base font-bold font-mono ${distance !== null && distance < 15 ? 'text-cyan-600' : 'text-emerald-700'}`}>
+                  {distance !== null ? `${distance} cm` : 'Active'}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">Sump Shutoff</span>
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">Flood State</span>
                 <span className="text-base font-bold font-mono text-slate-700">
-                  {isWaterHazard ? 'TRIGGERED' : 'Standby'}
+                  {waterDetected || waterLevel > 20 || (distance !== null && distance < 15) ? 'FLOOD ALERT' : 'DRY'}
                 </span>
               </div>
             </div>
           </div>
 
           <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Moisture State: {isWaterHazard ? 'Liquid Alert' : 'Floor Dry'}</span>
-            <span className="font-semibold text-slate-700">Digital Pin D6</span>
+            <span>Level Sensor: {isWaterHazard ? 'High Water Alert' : 'Normal Range'}</span>
+            <span className="font-semibold text-slate-700">HC-SR04 D6/D7</span>
           </div>
         </div>
 
@@ -775,9 +846,9 @@ const HomePage = () => {
                 <th className="py-2.5 px-4">Time</th>
                 <th className="py-2.5 px-4">Device</th>
                 <th className="py-2.5 px-4">Fire (Flame)</th>
-                <th className="py-2.5 px-4">Smoke Level</th>
-                <th className="py-2.5 px-4">Tilt / Quake</th>
-                <th className="py-2.5 px-4">Water Leak</th>
+                <th className="py-2.5 px-4">Gas / Smoke</th>
+                <th className="py-2.5 px-4">MPU6050 Tilt / Quake</th>
+                <th className="py-2.5 px-4">Ultrasonic / Water</th>
                 <th className="py-2.5 px-4">Persons</th>
                 <th className="py-2.5 px-4">Temp</th>
               </tr>
@@ -800,7 +871,7 @@ const HomePage = () => {
                       )}
                     </td>
                     <td className="py-2.5 px-4 font-bold text-amber-700">
-                      {packet.smoke || packet.gas || 50} PPM
+                      {packet.gas || packet.smoke || packet.mq2 || 50} PPM
                     </td>
                     <td className="py-2.5 px-4">
                       {packet.tilt || packet.earthquake ? (
@@ -808,17 +879,13 @@ const HomePage = () => {
                           QUAKE!
                         </span>
                       ) : (
-                        <span className="text-emerald-700">Stable ({packet.vibration || 0.04}g)</span>
+                        <span className="text-emerald-700">
+                          {packet.tiltAngle !== undefined && packet.tiltAngle !== null ? `${packet.tiltAngle}°` : 'Stable'} ({packet.vibration || 0.04}g)
+                        </span>
                       )}
                     </td>
-                    <td className="py-2.5 px-4">
-                      {packet.water ? (
-                        <span className="px-2 py-0.5 rounded bg-cyan-600 text-white font-bold text-[10px]">
-                          LEAK!
-                        </span>
-                      ) : (
-                        <span className="text-emerald-700">Dry</span>
-                      )}
+                    <td className="py-2.5 px-4 font-bold text-cyan-700">
+                      {packet.distance !== undefined && packet.distance !== null ? `${packet.distance} cm` : (packet.water ? 'LEAK!' : 'Dry')}
                     </td>
                     <td className="py-2.5 px-4 font-bold text-purple-700">
                       {packet.personCount || 3} in room

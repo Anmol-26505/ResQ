@@ -8,63 +8,173 @@ const HardwareGuideModal = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   const arduinoCode = `/*
- * ResQ IoT Platform — NodeMCU ESP8266 Telemetry Firmware
+ * =====================================================================
+ * ResQ IoT Emergency Platform — NodeMCU ESP8266 Telemetry Firmware
  * Target: NodeMCU ESP8266 (ESP-12E Module)
- * Libraries: ESP8266WiFi, ESP8266HTTPClient, ArduinoJson (v6+)
- * Connected Sensors:
- *   - DHT11 / DHT22: Temperature & Humidity (GPIO4 / D2)
- *   - MQ-2 / MQ-135: Toxic Gas & Smoke (Analog A0)
- *   - Flame IR Sensor: Digital Active-Low (GPIO5 / D1)
+ * Libraries: ESP8266WiFi, ESP8266HTTPClient, WiFiClientSecure, Wire, ArduinoJson (v6+)
+ * 
+ * Hardware Pin Connections:
+ *   1. MPU6050 (Earthquake & Tilt):
+ *      - SDA  --> D2 (GPIO4)
+ *      - SCL  --> D1 (GPIO5)
+ *      - VCC  --> 3.3V / 5V, GND --> GND
+ *   2. MQ-2 Gas & Smoke:
+ *      - AOUT --> A0 (ADC0)
+ *      - VCC  --> VIN (5V), GND --> GND
+ *   3. Flame IR Sensor (Fire Detection):
+ *      - DOUT --> D5 (GPIO14) [Active-LOW: LOW = Flame Detected]
+ *      - VCC  --> 3.3V, GND --> GND
+ *   4. Ultrasonic HC-SR04 (Distance / Water-Level):
+ *      - TRIG --> D6 (GPIO12)
+ *      - ECHO --> D7 (GPIO13)
+ *      - VCC  --> VIN (5V), GND --> GND
+ * =====================================================================
  */
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+#include <Wire.h>
 #include <ArduinoJson.h>
 
-// Wi-Fi Credentials
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// -------------------------------------------------------------
+// 1. Wi-Fi Configuration
+// -------------------------------------------------------------
+const char* WIFI_SSID     = "YOUR_WIFI_NAME";      // Replace with your 2.4GHz Wi-Fi SSID
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";  // Replace with your Wi-Fi Password
 
-// ResQ Backend Endpoint Configuration
-// Use your server IP or deployed domain (e.g., http://192.168.1.50:5000 or https://resq.yourdomain.com)
-const char* RESQ_SERVER_URL = "http://192.168.1.100:5000/api/iot/readings";
+// -------------------------------------------------------------
+// 2. Render Backend Endpoint Configuration
+// -------------------------------------------------------------
+// Replace with your deployed Render backend URL (e.g. https://resq-backend.onrender.com)
+// Both /api/sensors/update and /api/iot/readings are supported
+const char* RESQ_SERVER_URL = "https://YOUR_BACKEND_NAME.onrender.com/api/sensors/update";
 
-// Device Identification and Secure API Key (Generated from ResQ Devices Console)
+// Device Identification and Device API Key
 const char* DEVICE_ID       = "RESQ-NODE-01";
 const char* DEVICE_API_KEY  = "resq_dev_node01_alpha_9882a1";
 
-// Sensor Hardware Pin Mapping
-const int FLAME_SENSOR_PIN = 5;  // D1 (GPIO5)
-const int GAS_ANALOG_PIN   = A0; // ADC0
+// -------------------------------------------------------------
+// 3. Sensor Pin Mapping
+// -------------------------------------------------------------
+const int PIN_MQ2_GAS    = A0; // ADC0 (Analog input)
+const int PIN_FLAME      = 14; // D5 (GPIO14, Digital input)
+const int PIN_TRIG       = 12; // D6 (GPIO12, Ultrasonic Trigger output)
+const int PIN_ECHO       = 13; // D7 (GPIO13, Ultrasonic Echo input)
+// Note: MPU6050 uses I2C pins D2 (SDA, GPIO4) and D1 (SCL, GPIO5)
 
-// Ingestion interval (default: 3000ms = 3 seconds)
-const unsigned long SEND_INTERVAL_MS = 3000;
+const int MPU6050_ADDR   = 0x68;
+
+// Telemetry transmit interval (2000ms = 2 seconds)
+const unsigned long SEND_INTERVAL_MS = 2000;
 unsigned long lastSendTime = 0;
+
+// -------------------------------------------------------------
+// MPU6050 I2C Helper Functions (No external MPU library needed!)
+// -------------------------------------------------------------
+bool initMPU6050() {
+  Wire.begin(4, 5); // SDA = D2 (GPIO4), SCL = D1 (GPIO5)
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x6B); // PWR_MGMT_1 register
+  Wire.write(0);    // Wake up MPU6050
+  byte error = Wire.endTransmission();
+  return (error == 0);
+}
+
+void readMPU6050(float &ax, float &ay, float &az, float &tiltAngle, float &vibration) {
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x3B); // Starting from register 0x3B (ACCEL_XOUT_H)
+  if (Wire.endTransmission(false) != 0) {
+    ax = 0; ay = 0; az = 1.0;
+    tiltAngle = 0; vibration = 0.04;
+    return;
+  }
+  
+  Wire.requestFrom(MPU6050_ADDR, 6, true);
+  if (Wire.available() >= 6) {
+    int16_t rawX = Wire.read() << 8 | Wire.read();
+    int16_t rawY = Wire.read() << 8 | Wire.read();
+    int16_t rawZ = Wire.read() << 8 | Wire.read();
+
+    // Scale raw values (±2g range -> 16384 LSB/g)
+    ax = (float)rawX / 16384.0;
+    ay = (float)rawY / 16384.0;
+    az = (float)rawZ / 16384.0;
+
+    // Calculate structural tilt angle in degrees
+    float pitch = atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / PI;
+    float roll  = atan2(-ax, az) * 180.0 / PI;
+    tiltAngle = max(abs(pitch), abs(roll));
+
+    // Calculate seismic acceleration vector magnitude deviation
+    float totalAccel = sqrt(ax * ax + ay * ay + az * az);
+    vibration = abs(totalAccel - 1.0); // Deviation from resting 1.0g gravity
+  } else {
+    ax = 0; ay = 0; az = 1.0;
+    tiltAngle = 0; vibration = 0.04;
+  }
+}
+
+// -------------------------------------------------------------
+// HC-SR04 Ultrasonic Distance Helper
+// -------------------------------------------------------------
+float readUltrasonicDistance() {
+  digitalWrite(PIN_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PIN_TRIG, LOW);
+
+  // Measure echo pulse width (timeout 30ms = ~5 meters maximum range)
+  long duration = pulseIn(PIN_ECHO, HIGH, 30000);
+  if (duration <= 0) return 0.0;
+
+  // Speed of sound: 343 m/s = 0.0343 cm/microsecond (two-way trip)
+  float distanceCm = (duration * 0.0343) / 2.0;
+  return distanceCm;
+}
 
 void setup() {
   Serial.begin(115200);
-  pinMode(FLAME_SENSOR_PIN, INPUT);
+  delay(500);
+
+  pinMode(PIN_FLAME, INPUT);
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
 
   Serial.println();
-  Serial.println("==========================================");
-  Serial.println("ResQ IoT Emergency NodeMCU Starting Up...");
+  Serial.println("==================================================");
+  Serial.println("🛡️  ResQ IoT Emergency NodeMCU Starting Up...");
   Serial.printf("Device ID: %s\\n", DEVICE_ID);
-  Serial.println("==========================================");
+  Serial.println("==================================================");
+
+  // Initialize MPU6050
+  if (initMPU6050()) {
+    Serial.println("✅ MPU6050 Accelerometer/Gyroscope initialized (I2C: D2/D1)");
+  } else {
+    Serial.println("⚠️  MPU6050 not detected at 0x68. Check wiring (D2=SDA, D1=SCL).");
+  }
 
   // Connect to Wi-Fi
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to Wi-Fi");
+  Serial.printf("Connecting to Wi-Fi: %s", WIFI_SSID);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
 
-  Serial.println();
-  Serial.printf("Connected! IP Address: %s (RSSI: %d dBm)\\n",
-                WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.printf("✅ Wi-Fi Connected! IP: %s (Signal: %d dBm)\\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  } else {
+    Serial.println();
+    Serial.println("❌ Wi-Fi Connection Failed. Will retry in loop.");
+  }
 }
 
 void loop() {
@@ -77,56 +187,84 @@ void loop() {
 
 void transmitTelemetry() {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Wi-Fi disconnected. Reconnecting...");
+    Serial.println("⚠️  Wi-Fi disconnected. Reconnecting...");
+    WiFi.reconnect();
     return;
   }
 
-  WiFiClient client;
-  HTTPClient http;
+  // 1. Read MQ-2 Gas & Smoke (Analog 0-1023)
+  int gasRaw = analogRead(PIN_MQ2_GAS);
 
-  // Initialize HTTP POST connection
-  http.begin(client, RESQ_SERVER_URL);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("x-api-key", DEVICE_API_KEY);
+  // 2. Read Flame Sensor (Active-LOW: LOW = Fire detected)
+  bool flameDetected = (digitalRead(PIN_FLAME) == LOW);
 
-  // Read analog & digital sensors
-  int gasAdcRaw = analogRead(GAS_ANALOG_PIN);
-  bool flameDetected = (digitalRead(FLAME_SENSOR_PIN) == LOW); // Active-low IR sensor
+  // 3. Read Ultrasonic Distance (cm)
+  float distanceCm = readUltrasonicDistance();
 
-  // Example reading values (Replace with dht.readTemperature() & dht.readHumidity())
-  float temperature = 24.5;
-  float humidity = 48.0;
+  // 4. Read MPU6050 Accelerometer & Tilt Angle
+  float ax = 0, ay = 0, az = 1.0, tiltAngle = 0, vibration = 0;
+  readMPU6050(ax, ay, az, tiltAngle, vibration);
 
-  // Build JSON payload
-  StaticJsonDocument<256> doc;
+  // 5. Calculate Hazard Flags
+  bool earthquakeDetected = (vibration > 0.35); // Tremor > 0.35g deviation
+  bool tiltHazard = (tiltAngle > 15.0);          // Tilt > 15 degrees
+  bool waterLeakHazard = (distanceCm > 0.0 && distanceCm < 12.0); // Water risen within 12cm
+
+  // Print to Serial Monitor
+  Serial.println("--------------------------------------------------");
+  Serial.printf("🔥 Flame: %s | 💨 Gas: %d PPM | 📐 Tilt: %.1f deg\\n",
+                flameDetected ? "ACTIVE FIRE!" : "Safe", gasRaw, tiltAngle);
+  Serial.printf("⚠️  Vibration: %.2f g (%s) | 📏 Distance: %.1f cm\\n",
+                vibration, earthquakeDetected ? "QUAKE DETECTED!" : "Stable", distanceCm);
+
+  // 6. Build JSON Payload
+  StaticJsonDocument<512> doc;
   doc["deviceId"]    = DEVICE_ID;
-  doc["temperature"] = temperature;
-  doc["humidity"]    = humidity;
-  
-  JsonObject sensors = doc.createNestedObject("sensors");
-  sensors["gas"]   = gasAdcRaw;
-  sensors["flame"] = flameDetected;
+  doc["apiKey"]      = DEVICE_API_KEY;
+  doc["gas"]         = gasRaw;
+  doc["smoke"]       = gasRaw;
+  doc["flame"]       = flameDetected;
+  doc["distance"]    = (distanceCm > 0.0) ? distanceCm : 0.0;
+  doc["tiltAngle"]   = tiltAngle;
+  doc["vibration"]   = vibration;
+  doc["tilt"]        = tiltHazard;
+  doc["earthquake"]  = earthquakeDetected;
+  doc["water"]       = waterLeakHazard;
+  doc["waterLevel"]  = (distanceCm > 0.0 && distanceCm < 50.0) ? (int)(100.0 - (distanceCm * 2.0)) : 0;
+  doc["rssi"]        = WiFi.RSSI();
 
-  doc["rssi"] = WiFi.RSSI();
-  doc["firmwareVersion"] = "1.2.0-esp8266";
+  // MPU6050 3-axis sub-object
+  JsonObject mpu = doc.createNestedObject("mpu6050");
+  mpu["ax"] = ax;
+  mpu["ay"] = ay;
+  mpu["az"] = az;
 
   String requestBody;
   serializeJson(doc, requestBody);
 
-  Serial.print("Posting Telemetry: ");
-  Serial.println(requestBody);
+  // 7. Send HTTPS POST to Render Backend
+  WiFiClientSecure client;
+  client.setInsecure(); // Allows SSL without hardcoding root CA certificates
+  client.setTimeout(10000);
 
-  int httpCode = http.POST(requestBody);
+  HTTPClient http;
+  if (http.begin(client, RESQ_SERVER_URL)) {
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("x-api-key", DEVICE_API_KEY);
 
-  if (httpCode > 0) {
-    String response = http.getString();
-    Serial.printf("Server Response [HTTP %d]: %s\\n", httpCode, response.c_str());
+    int httpCode = http.POST(requestBody);
+    if (httpCode > 0) {
+      String response = http.getString();
+      Serial.printf("📡 Telemetry Sent [HTTP %d]: %s\\n", httpCode, response.c_str());
+    } else {
+      Serial.printf("❌ HTTP POST Failed: %s (Code %d)\\n", http.errorToString(httpCode).c_str(), httpCode);
+    }
+    http.end();
   } else {
-    Serial.printf("HTTP POST Failed, Error: %s\\n", http.errorToString(httpCode).c_str());
+    Serial.println("❌ Unable to connect to Render server.");
   }
-
-  http.end();
-}`;
+}
+`;
 
   const jsonPayload = `{
   "deviceId": "RESQ-NODE-01",
@@ -288,53 +426,35 @@ void transmitTelemetry() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 text-slate-600">
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">DHT11 / DHT22</td>
-                      <td className="py-2.5 px-4 font-mono">DATA</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D2 (GPIO4)</td>
-                      <td className="py-2.5 px-4">Digital 1-Wire temperature & humidity stream</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">MQ-2 / MQ-135 Gas</td>
-                      <td className="py-2.5 px-4 font-mono">AOUT (Analog)</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">A0 (ADC0)</td>
-                      <td className="py-2.5 px-4">Analog gas & smoke concentration level (0-1023)</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">Flame Optical IR</td>
-                      <td className="py-2.5 px-4 font-mono">DOUT (Digital)</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D1 (GPIO5)</td>
-                      <td className="py-2.5 px-4">Active-low infrared flame detector (LOW = Fire)</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">SW-420 Tilt / Earthquake</td>
-                      <td className="py-2.5 px-4 font-mono">DOUT (Digital)</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D5 (GPIO14)</td>
-                      <td className="py-2.5 px-4">Seismic tremor, vibration & structural tilt sensor</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">Water Leak / Flood Probe</td>
-                      <td className="py-2.5 px-4 font-mono">DOUT / AOUT</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D6 (GPIO12)</td>
-                      <td className="py-2.5 px-4">Liquid immersion & floor flood detection</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">PIR Person Motion / Count</td>
-                      <td className="py-2.5 px-4 font-mono">OUT (Digital)</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D7 (GPIO13)</td>
-                      <td className="py-2.5 px-4">Human occupancy & room movement detection</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">MPU-6050 Accel & Gyro</td>
+                    <tr className="bg-teal-50/40">
+                      <td className="py-2.5 px-4 font-bold text-slate-900">MPU6050 Accel & Gyro</td>
                       <td className="py-2.5 px-4 font-mono">SDA / SCL (I2C)</td>
                       <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D2 / D1 (GPIO4/5)</td>
-                      <td className="py-2.5 px-4">3-axis accelerometer, gyroscope & structural tilt angle</td>
+                      <td className="py-2.5 px-4">Earthquake vibration intensity & building tilt angle (deg)</td>
                     </tr>
                     <tr>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">HC-SR04 Ultrasonic</td>
+                      <td className="py-2.5 px-4 font-bold text-slate-900">MQ-2 Gas & Smoke</td>
+                      <td className="py-2.5 px-4 font-mono">AOUT (Analog)</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">A0 (ADC0)</td>
+                      <td className="py-2.5 px-4">Hazardous flammable gas & toxic smoke concentration (PPM)</td>
+                    </tr>
+                    <tr className="bg-rose-50/40">
+                      <td className="py-2.5 px-4 font-bold text-slate-900">Flame Optical IR</td>
+                      <td className="py-2.5 px-4 font-mono">DOUT (Digital)</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-rose-700">D5 (GPIO14)</td>
+                      <td className="py-2.5 px-4">Active-LOW optical fire detector (LOW = Fire Detected)</td>
+                    </tr>
+                    <tr className="bg-cyan-50/40">
+                      <td className="py-2.5 px-4 font-bold text-slate-900">HC-SR04 Ultrasonic</td>
                       <td className="py-2.5 px-4 font-mono">TRIG / ECHO</td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-teal-700">D3 / D4 (GPIO0/2)</td>
-                      <td className="py-2.5 px-4">Precision distance measurement (cm) & water level</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-cyan-700">D6 / D7 (GPIO12/13)</td>
+                      <td className="py-2.5 px-4">Surface distance measurement (cm) & water-level monitoring</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2.5 px-4 font-bold text-slate-900">Power & Common GND</td>
+                      <td className="py-2.5 px-4 font-mono">VCC / GND</td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-slate-700">3.3V, VIN (5V) & GND</td>
+                      <td className="py-2.5 px-4">Common power rails (MQ2 & HC-SR04 on 5V; Flame & MPU on 3.3V)</td>
                     </tr>
                   </tbody>
                 </table>

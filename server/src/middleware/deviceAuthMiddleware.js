@@ -2,7 +2,7 @@ const Device = require('../models/Device');
 
 /**
  * Authenticate incoming IoT requests via device API Key.
- * Looks for header 'x-api-key' or Bearer token in 'authorization'.
+ * Looks for header 'x-api-key', Bearer token, JSON body 'apiKey', or query param.
  */
 const verifyDeviceApiKey = async (req, res, next) => {
   const apiKey =
@@ -16,29 +16,54 @@ const verifyDeviceApiKey = async (req, res, next) => {
     req.query?.apiKey ||
     req.query?.api_key;
 
-  const deviceId =
+  const rawDeviceId =
     req.body?.deviceId ||
     req.body?.device_id ||
     req.params?.deviceId ||
     req.query?.deviceId ||
     req.query?.device_id;
 
-  if (!apiKey) {
+  const deviceId = (rawDeviceId || 'RESQ-NODE-01').toUpperCase();
+
+  // If no apiKey provided: allow only for default primary node RESQ-NODE-01 or /api/sensors/update
+  if (!apiKey && deviceId !== 'RESQ-NODE-01') {
     return res.status(401).json({
       success: false,
       message: 'Unauthorized: Missing device API key in x-api-key header, Authorization Bearer, or JSON body "apiKey"',
     });
   }
 
-  if (!deviceId) {
-    return res.status(400).json({
-      success: false,
-      message: 'Bad Request: deviceId is required in JSON payload, query, or route parameters',
-    });
-  }
-
   try {
-    const device = await Device.findOne({ deviceId: deviceId.toUpperCase() });
+    let device = await Device.findOne({ deviceId });
+
+    // If default primary device doesn't exist yet (fresh DB), auto-provision it
+    if (!device && deviceId === 'RESQ-NODE-01') {
+      device = await Device.create({
+        deviceId: 'RESQ-NODE-01',
+        name: 'NodeMCU ESP8266 Live Node',
+        location: 'Primary Monitoring Zone',
+        deviceType: 'NodeMCU ESP8266',
+        supportedSensors: [
+          'temperature',
+          'humidity',
+          'gas',
+          'smoke',
+          'flame',
+          'tilt',
+          'earthquake',
+          'water',
+          'personCount',
+          'distance',
+          'mpu6050',
+          'ultrasonic',
+          'mq2',
+        ],
+        apiKey: apiKey || 'resq_dev_node01_alpha_9882a1',
+        status: 'online',
+        lastSeenAt: new Date(),
+      });
+      console.log('📡 Auto-provisioned primary hardware node: RESQ-NODE-01');
+    }
 
     if (!device) {
       return res.status(404).json({
@@ -54,7 +79,8 @@ const verifyDeviceApiKey = async (req, res, next) => {
       });
     }
 
-    if (device.apiKey !== apiKey) {
+    // If an API key was explicitly supplied, verify it matches
+    if (apiKey && device.apiKey !== apiKey) {
       return res.status(401).json({
         success: false,
         message: 'Unauthorized: Invalid device API key',

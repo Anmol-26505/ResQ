@@ -222,11 +222,20 @@ const getLatestReadings = async (req, res, next) => {
       });
     }
 
-    // Return latest readings for all known devices
-    const devices = await Device.find({}).select('deviceId name status lastSeenAt latestReading location supportedSensors');
+    // Return latest readings for all known devices, plus the overall latest reading
+    const [devices, mostRecent] = await Promise.all([
+      Device.find({}).select('deviceId name status lastSeenAt latestReading location supportedSensors'),
+      SensorReading.findOne({}).sort({ timestamp: -1 }),
+    ]);
+
+    const activeReading = mostRecent || devices[0]?.latestReading || null;
+
     res.json({
       success: true,
       count: devices.length,
+      latestReading: activeReading,
+      reading: activeReading,
+      timestamp: activeReading?.timestamp || new Date().toISOString(),
       devices: devices.map((d) => ({
         deviceId: d.deviceId,
         name: d.name,
