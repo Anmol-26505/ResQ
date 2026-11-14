@@ -48,7 +48,7 @@ services:
     plan: free
     region: oregon
     rootDir: client
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     staticPublishPath: dist
     headers:
       - path: /*

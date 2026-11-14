@@ -6,13 +6,16 @@
   "scripts": {
     "start": "npm start --prefix server",
     "build": "npm run install:all && npm run build:client",
-    "install:all": "npm install --prefix server && npm install --prefix client",
+    "build:client": "npm install --prefix client --include=dev && npm run build --prefix client",
+    "build:all": "npm install --prefix server && npm install --prefix client --include=dev && npm run build --prefix client",
+    "install:all": "npm install --prefix server && npm install --prefix client --include=dev",
+    "install:client": "npm install --prefix client --include=dev",
+    "install:server": "npm install --prefix server",
     "server": "npm run dev --prefix server",
     "client": "npm run dev --prefix client",
     "seed": "npm run seed --prefix server",
     "simulate": "npm run simulate --prefix server",
-    "test": "npm run test --prefix server",
-    "build:client": "npm run build --prefix client"
+    "test": "npm run test --prefix server"
   },
   "keywords": [
     "iot",
