@@ -57,7 +57,6 @@ const sendTelemetry = () => {
       vibration: 0.04,
       water: false,
       waterLevel: 0,
-      personCount: 3,
     },
     rssi: -58 - Math.floor(Math.random() * 8),
     firmwareVersion: '1.2.0-esp8266',

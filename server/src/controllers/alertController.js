@@ -2,6 +2,7 @@ const Alert = require('../models/Alert');
 const AlertRule = require('../models/AlertRule');
 const Device = require('../models/Device');
 const { broadcastAlert, broadcastAlertUpdated } = require('../sockets/socketHandler');
+const { sendTestNotification, getTelegramConfig } = require('../services/telegramService');
 
 // @desc    Get all alerts with filtering & pagination
 // @route   GET /api/alerts
@@ -325,6 +326,38 @@ const createManualAlert = async (req, res, next) => {
   }
 };
 
+// @desc    Send test Telegram notification to verify bot setup
+// @route   POST /api/alerts/test-telegram
+// @access  Private (Authorized Operator / Administrator)
+const testTelegramAlert = async (req, res, next) => {
+  try {
+    const config = getTelegramConfig();
+    if (!config.isConfigured) {
+      return res.status(400).json({
+        success: false,
+        message: 'Telegram is not configured. Please ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set in environment variables.',
+      });
+    }
+
+    const operatorName = req.user?.name || req.user?.email || 'Authorized Administrator';
+    const result = await sendTestNotification(operatorName);
+
+    if (result.success) {
+      return res.json({
+        success: true,
+        message: 'Telegram test alert delivered successfully to configured chat.',
+      });
+    } else {
+      return res.status(502).json({
+        success: false,
+        message: `Telegram delivery failed: ${result.reason || 'Check bot permissions or Chat ID'}`,
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAlerts,
   getAlertById,
@@ -335,4 +368,5 @@ module.exports = {
   createAlertRule,
   updateAlertRule,
   deleteAlertRule,
+  testTelegramAlert,
 };

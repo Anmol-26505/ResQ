@@ -6,7 +6,6 @@ import {
   Thermometer,
   Droplets,
   Compass,
-  Users,
   Radio,
   Cpu,
   Play,
@@ -108,7 +107,6 @@ const LiveMonitoringPage = () => {
   const vibration = activeReading.vibration !== undefined && activeReading.vibration !== null ? activeReading.vibration : 0.04;
   const water = Boolean(activeReading.water);
   const waterLevel = activeReading.waterLevel !== undefined && activeReading.waterLevel !== null ? activeReading.waterLevel : 0;
-  const personCount = activeReading.personCount !== undefined && activeReading.personCount !== null ? activeReading.personCount : 3;
 
   const isTempCritical = temp > 50;
   const isTempWarning = temp > 36;
@@ -117,7 +115,6 @@ const LiveMonitoringPage = () => {
   const isFlameCritical = flame === true;
   const isTiltCritical = tilt || earthquake || vibration > 1.5;
   const isWaterCritical = water || waterLevel > 40;
-  const isPersonOvercrowded = personCount > 10;
 
   if (loading) {
     return (
@@ -394,44 +391,6 @@ const LiveMonitoringPage = () => {
           </div>
         </div>
 
-        {/* Person Count in Room Card */}
-        <div
-          className={`p-5 rounded-2xl border transition-all ${
-            isPersonOvercrowded
-              ? 'bg-purple-50 border-purple-400 ring-4 ring-purple-500/20 shadow-lg'
-              : 'bg-white border-slate-200 shadow-card'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-600">Person Count in Room</span>
-            <div
-              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                isPersonOvercrowded ? 'bg-purple-600 text-white animate-bounce' : 'bg-purple-50 text-purple-600'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="text-3xl font-extrabold font-mono text-slate-900 tracking-tight">
-            {personCount} <span className="text-base font-bold text-slate-500">Persons</span>
-          </div>
-
-          <div className="mt-2 text-xs space-y-1">
-            <div className="flex items-center justify-between text-slate-500">
-              <span>Safe Room Limit:</span>
-              <span className="font-mono font-medium">Max 10 Persons</span>
-            </div>
-            <div
-              className={`font-bold text-[11px] ${
-                isPersonOvercrowded ? 'text-purple-700' : 'text-emerald-700'
-              }`}
-            >
-              {isPersonOvercrowded ? 'OVERCROWDED HAZARD' : 'Safe Occupancy Limit'}
-            </div>
-          </div>
-        </div>
-
         {/* Room Atmosphere Card */}
         <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-card">
           <div className="flex items-center justify-between mb-3">
@@ -477,7 +436,6 @@ const LiveMonitoringPage = () => {
                 <th className="py-2.5 px-4 font-semibold">Smoke</th>
                 <th className="py-2.5 px-4 font-semibold">Tilt / Quake</th>
                 <th className="py-2.5 px-4 font-semibold">Water</th>
-                <th className="py-2.5 px-4 font-semibold">Persons</th>
                 <th className="py-2.5 px-4 font-semibold">Temp</th>
               </tr>
             </thead>
@@ -517,13 +475,12 @@ const LiveMonitoringPage = () => {
                         <span className="text-emerald-700">Dry</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-4 font-bold text-purple-700">{r.personCount || 3}</td>
                     <td className="py-2.5 px-4 text-rose-600 font-bold">{r.temperature !== null ? `${r.temperature} °C` : '--'}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-xs text-slate-400 font-sans">
+                  <td colSpan={7} className="py-8 text-center text-xs text-slate-400 font-sans">
                     No readings ingested yet. Start the demo simulator or connect your ESP8266 node.
                   </td>
                 </tr>

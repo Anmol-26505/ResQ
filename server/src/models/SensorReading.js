@@ -53,10 +53,6 @@ const sensorReadingSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    personCount: {
-      type: Number,
-      default: 0,
-    },
     distance: {
       type: Number,
       default: null, // Ultrasonic distance in cm

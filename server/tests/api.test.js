@@ -216,7 +216,6 @@ describe('ResQ Backend API Suite', () => {
         tiltAngle: 4.5,
         distance: 75.3,
         water: false,
-        personCount: 2,
       });
 
     assert.equal(res.status, 201);
@@ -254,7 +253,7 @@ describe('ResQ Backend API Suite', () => {
     assert.ok(res.body.hazards.earthquake);
     assert.ok(res.body.hazards.tilt);
     assert.ok(res.body.hazards.waterLeakage);
-    assert.ok(res.body.hazards.occupancy);
+    assert.equal(res.body.hazards.occupancy, undefined);
   });
 
   test('15. POST /api/alerts receives and processes manual/edge alert', async () => {
@@ -314,5 +313,78 @@ describe('ResQ Backend API Suite', () => {
     assert.equal(res.body.success, true);
     assert.ok(res.body.latestReading);
     assert.equal(res.body.latestReading.distance, 42.6);
+  });
+
+  test('18. POST /api/alerts/test-telegram requires authorization and returns configuration status', async () => {
+    // Rejected without token
+    const unauthRes = await request(app).post('/api/alerts/test-telegram');
+    assert.equal(unauthRes.status, 401);
+
+    // Authorized call
+    const authRes = await request(app)
+      .post('/api/alerts/test-telegram')
+      .set('Authorization', `Bearer ${authToken}`);
+
+    // Since TELEGRAM_BOT_TOKEN is not in local test env, it gracefully reports 400 not configured
+    // or 200 if credentials were set
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      assert.equal(authRes.status, 400);
+      assert.equal(authRes.body.success, false);
+      assert.match(authRes.body.message, /Telegram is not configured/);
+    } else {
+      assert.ok([200, 502].includes(authRes.status));
+    }
+  });
+
+  test('19. Stationary MPU6050 accelerometer readings reject resting baseline noise', async () => {
+    // Stationary sensor reading: ax=0.03, ay=0.05, az=0.98 (|a|=0.982g, dev=0.018g)
+    const res = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        ax: 0.03,
+        ay: 0.05,
+        az: 0.98,
+        tiltAngle: 2.1,
+      });
+
+    assert.equal(res.status, 201);
+    const reading = await SensorReading.findById(res.body.readingId);
+    assert.ok(reading);
+    // Dynamic noise floor filtering keeps vibration clamped to nominal 0.04g resting baseline
+    assert.equal(reading.vibration, 0.04);
+    assert.equal(reading.earthquake, false);
+    assert.equal(reading.tilt, false);
+  });
+
+  test('20. Transient tilt angle spike is rejected by persistence filter', async () => {
+    // Single transient spike (e.g. 18.5 degrees) should NOT trigger tilt on first reading
+    const spikeRes = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        tiltAngle: 18.5,
+      });
+
+    assert.equal(spikeRes.status, 201);
+    const spikeReading = await SensorReading.findById(spikeRes.body.readingId);
+    assert.ok(spikeReading);
+    assert.equal(spikeReading.tilt, false, 'Single transient spike must not trigger confirmed tilt');
+
+    // Second consecutive reading confirming tilt DOES trigger confirmed tilt
+    const sustainedRes = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        tiltAngle: 19.2,
+      });
+
+    assert.equal(sustainedRes.status, 201);
+    const sustainedReading = await SensorReading.findById(sustainedRes.body.readingId);
+    assert.ok(sustainedReading);
+    assert.equal(sustainedReading.tilt, true, 'Sustained tilt persisting across consecutive readings confirms tilt');
   });
 });

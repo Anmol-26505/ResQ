@@ -10,6 +10,7 @@ const {
   createAlertRule,
   updateAlertRule,
   deleteAlertRule,
+  testTelegramAlert,
 } = require('../controllers/alertController');
 const { protect, optionalProtect } = require('../middleware/authMiddleware');
 
@@ -19,8 +20,9 @@ router.post('/', optionalProtect, createManualAlert);
 router.get('/:id', optionalProtect, getAlertById);
 router.patch('/:id/acknowledge', optionalProtect, acknowledgeAlert);
 
-// Protected routes
+// Protected routes (Admin / Authorized Operator)
 router.use(protect);
+router.post('/test-telegram', testTelegramAlert);
 router.patch('/:id/resolve', resolveAlert);
 
 // Alert Rules

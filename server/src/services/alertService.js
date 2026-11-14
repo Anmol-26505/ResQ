@@ -75,7 +75,6 @@ const processReadingAlerts = async (reading, device) => {
         else if (rule.sensorType === 'gas' || rule.sensorType === 'smoke') unit = ' PPM';
         else if (rule.sensorType === 'vibration') unit = 'g';
         else if (rule.sensorType === 'waterLevel') unit = '%';
-        else if (rule.sensorType === 'personCount') unit = ' persons';
 
         const alertTitle = `${rule.name} [${reading.deviceId}]`;
         const alertMessage = `${rule.description || 'Threshold exceeded'}: ${rule.sensorType} reading is ${sensorVal}${unit} (threshold: ${rule.operator} ${rule.thresholdValue}${unit})`;

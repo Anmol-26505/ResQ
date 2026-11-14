@@ -3,9 +3,56 @@ const SensorReading = require('../models/SensorReading');
 const Alert = require('../models/Alert');
 const { processReadingAlerts } = require('../services/alertService');
 const { broadcastSensorReading, broadcastDeviceStatus } = require('../sockets/socketHandler');
+const { evaluateAndNotifyHazards } = require('../services/telegramService');
+
+// In-memory tilt persistence tracker to eliminate false transient tilt spikes
+// Map<deviceId, { consecutiveTiltCount: number, isConfirmedTilt: boolean, lastReadingTime: number }>
+const deviceTiltTracker = new Map();
+
+/**
+ * Evaluate structural tilt with hysteresis and multi-cycle confirmation.
+ * Prevents resting sensor noise or accidental bumps from triggering false alerts.
+ */
+const evaluateTiltWithHysteresis = (deviceId, tiltAngle, rawTiltFlag) => {
+  const devKey = String(deviceId).toUpperCase();
+  const tracker = deviceTiltTracker.get(devKey) || {
+    consecutiveTiltCount: 0,
+    isConfirmedTilt: false,
+    lastReadingTime: Date.now(),
+  };
+
+  if (tiltAngle !== null && !isNaN(tiltAngle)) {
+    const absAngle = Math.abs(tiltAngle);
+    if (absAngle > 15.0) {
+      tracker.consecutiveTiltCount += 1;
+      // Require at least 2 consecutive readings to confirm sustained structural tilt
+      if (tracker.consecutiveTiltCount >= 2) {
+        tracker.isConfirmedTilt = true;
+      }
+    } else if (absAngle <= 12.0) {
+      // 3-degree hysteresis band: only clears when angle drops below 12 degrees
+      tracker.consecutiveTiltCount = 0;
+      tracker.isConfirmedTilt = false;
+    }
+  } else if (rawTiltFlag !== undefined) {
+    if (Boolean(rawTiltFlag)) {
+      tracker.consecutiveTiltCount += 1;
+      if (tracker.consecutiveTiltCount >= 2) {
+        tracker.isConfirmedTilt = true;
+      }
+    } else {
+      tracker.consecutiveTiltCount = 0;
+      tracker.isConfirmedTilt = false;
+    }
+  }
+
+  tracker.lastReadingTime = Date.now();
+  deviceTiltTracker.set(devKey, tracker);
+  return tracker.isConfirmedTilt;
+};
 
 // @desc    Ingest telemetry data from ESP8266 or simulated node
-// @route   POST /api/iot/readings
+// @route   POST /api/iot/readings or POST /api/sensors/update
 // @access  Device API Key authenticated
 const postReading = async (req, res, next) => {
   try {
@@ -43,29 +90,34 @@ const postReading = async (req, res, next) => {
     const gy = payload.gy !== undefined ? Number(payload.gy) : (rawSensors.gy !== undefined ? Number(rawSensors.gy) : (rawMpu.gy !== undefined ? Number(rawMpu.gy) : null));
     const gz = payload.gz !== undefined ? Number(payload.gz) : (rawSensors.gz !== undefined ? Number(rawSensors.gz) : (rawMpu.gz !== undefined ? Number(rawMpu.gz) : null));
     
-    // Tilt angle in degrees
+    // Tilt angle in degrees (calculated relative to calibrated baseline)
     const tiltAngle = payload.tiltAngle !== undefined ? Number(payload.tiltAngle) : (payload.angle !== undefined ? Number(payload.angle) : (rawSensors.tiltAngle !== undefined ? Number(rawSensors.tiltAngle) : null));
 
-    // Calculate or accept tilt hazard flag
-    const tilt = Boolean(payload.tilt !== undefined ? payload.tilt : (rawSensors.tilt !== undefined ? rawSensors.tilt : (tiltAngle !== null && Math.abs(tiltAngle) > 15)));
+    // Calculate structural tilt with persistence & hysteresis
+    const rawTiltInput = payload.tilt !== undefined ? payload.tilt : rawSensors.tilt;
+    const tilt = evaluateTiltWithHysteresis(deviceId, tiltAngle, rawTiltInput);
 
-    // Calculate or accept vibration & earthquake
+    // Calculate vibration & earthquake with noise floor filtering
     let vibration = payload.vibration !== undefined ? Number(payload.vibration) : (rawSensors.vibration !== undefined ? Number(rawSensors.vibration) : 0);
     if (vibration === 0 && ax !== null && ay !== null && az !== null) {
       const accelMagnitude = Math.sqrt(ax * ax + ay * ay + az * az);
       vibration = Number(Math.abs(accelMagnitude - 1.0).toFixed(2));
     }
-    const earthquake = Boolean(payload.earthquake !== undefined ? payload.earthquake : (rawSensors.earthquake !== undefined ? rawSensors.earthquake : (vibration > 1.2)));
 
-    // Water & Flood
+    // Filter resting stationary noise floor (ignore < 0.12g baseline jitter)
+    if (vibration < 0.12) {
+      vibration = 0.04;
+    }
+
+    // Seismic shock triggers only when vibration exceeds 0.40g or edge confirmation
+    const earthquake = Boolean(payload.earthquake !== undefined ? payload.earthquake : (rawSensors.earthquake !== undefined ? rawSensors.earthquake : (vibration >= 0.40)));
+
+    // Water & Flood (Ultrasonic or probe)
     const water = Boolean(payload.water !== undefined ? payload.water : (payload.waterLeak !== undefined ? payload.waterLeak : (rawSensors.water !== undefined ? rawSensors.water : false)));
     const waterLevel = payload.waterLevel !== undefined ? Number(payload.waterLevel) : (rawSensors.waterLevel !== undefined ? Number(rawSensors.waterLevel) : (water ? 90 : 0));
 
     // Ultrasonic sensor distance (cm)
     const distance = payload.distance !== undefined ? Number(payload.distance) : (payload.ultrasonic !== undefined ? Number(payload.ultrasonic) : (payload.distanceCm !== undefined ? Number(payload.distanceCm) : (rawSensors.distance !== undefined ? Number(rawSensors.distance) : null)));
-
-    // Room occupancy / Person count
-    const personCount = payload.personCount !== undefined ? Number(payload.personCount) : (payload.people !== undefined ? Number(payload.people) : (rawSensors.personCount !== undefined ? Number(rawSensors.personCount) : 0));
 
     const isSimulated = Boolean(payload.isSimulated || payload.simulated || false);
     const readingTimestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
@@ -99,7 +151,6 @@ const postReading = async (req, res, next) => {
       water,
       waterLevel,
       distance,
-      personCount,
       mpu6050: mpuData,
       rawSensors,
       isSimulated,
@@ -123,7 +174,6 @@ const postReading = async (req, res, next) => {
         water,
         waterLevel,
         distance,
-        personCount,
         mpu6050: mpuData,
         timestamp: reading.timestamp,
       };
@@ -140,6 +190,26 @@ const postReading = async (req, res, next) => {
 
     // Evaluate Alert Rules & trigger real-time alerts if thresholds breached
     const triggeredAlerts = await processReadingAlerts(reading, req.device);
+
+    // Evaluate hazards and send Telegram emergency or recovery notifications
+    const gasOrSmoke = (smoke !== null && smoke > gas) ? smoke : (gas || 0);
+    evaluateAndNotifyHazards(
+      deviceId,
+      {
+        fire: flame || (temperature !== null && temperature > 50),
+        gas: gasOrSmoke > 200,
+        tilt,
+        earthquake,
+      },
+      {
+        gasPpm: gasOrSmoke,
+        flame,
+        tiltAngle,
+        vibration,
+        distance,
+        temperature,
+      }
+    );
 
     res.status(201).json({
       success: true,
@@ -266,7 +336,6 @@ const getHazardStatus = async (req, res, next) => {
     let hasTilt = false;
     let hasEarthquake = false;
     let hasWater = false;
-    let totalPersons = 0;
     let maxVibration = 0;
 
     devices.forEach((d) => {
@@ -278,7 +347,6 @@ const getHazardStatus = async (req, res, next) => {
       if (r.earthquake) hasEarthquake = true;
       if (r.vibration !== undefined && r.vibration !== null && r.vibration > maxVibration) maxVibration = r.vibration;
       if (r.water) hasWater = true;
-      if (r.personCount) totalPersons += r.personCount;
     });
 
     const isCritical = hasFire || hasEarthquake || hasTilt || hasWater || maxSmoke > 400 || activeAlerts.some((a) => a.severity === 'critical');
@@ -311,10 +379,6 @@ const getHazardStatus = async (req, res, next) => {
         waterLeakage: {
           detected: hasWater,
           status: hasWater ? 'CRITICAL_FLOOD_LEAK' : 'DRY',
-        },
-        occupancy: {
-          personCount: totalPersons,
-          status: totalPersons > 10 ? 'OVER_CAPACITY' : 'NORMAL',
         },
       },
       recentActiveAlerts: activeAlerts.slice(0, 5).map((a) => ({

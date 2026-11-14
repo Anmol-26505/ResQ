@@ -10,9 +10,9 @@ let simulationTickCount = 0;
 
 // Device simulation state tracking (to create realistic continuous sensor data)
 const deviceStates = {
-  'RESQ-NODE-01': { temp: 24.5, hum: 48, gas: 75, smoke: 55, flame: false, tilt: false, earthquake: false, vibration: 0.04, water: false, waterLevel: 0, personCount: 3 },
-  'RESQ-NODE-02': { temp: 21.0, hum: 55, gas: 60, smoke: 42, flame: false, tilt: false, earthquake: false, vibration: 0.03, water: false, waterLevel: 0, personCount: 1 },
-  'RESQ-NODE-03': { temp: 29.2, hum: 38, gas: 110, smoke: 85, flame: false, tilt: false, earthquake: false, vibration: 0.05, water: false, waterLevel: 0, personCount: 4 },
+  'RESQ-NODE-01': { temp: 24.5, hum: 48, gas: 75, smoke: 55, flame: false, tilt: false, earthquake: false, vibration: 0.04, water: false, waterLevel: 0 },
+  'RESQ-NODE-02': { temp: 21.0, hum: 55, gas: 60, smoke: 42, flame: false, tilt: false, earthquake: false, vibration: 0.03, water: false, waterLevel: 0 },
+  'RESQ-NODE-03': { temp: 29.2, hum: 38, gas: 110, smoke: 85, flame: false, tilt: false, earthquake: false, vibration: 0.05, water: false, waterLevel: 0 },
 };
 
 /**
@@ -38,7 +38,6 @@ const runSimulationTick = async () => {
           vibration: 0.03,
           water: false,
           waterLevel: 0,
-          personCount: Math.floor(1 + Math.random() * 4),
         };
       }
 
@@ -61,10 +60,6 @@ const runSimulationTick = async () => {
       state.vibration = Math.round((0.02 + Math.random() * 0.06) * 100) / 100;
       state.water = false;
       state.waterLevel = 0;
-      // Slight person count drift
-      if (Math.random() < 0.2) {
-        state.personCount = Math.max(1, Math.min(6, state.personCount + (Math.random() > 0.5 ? 1 : -1)));
-      }
 
       // Apply active hazard scenario to the primary node (or all if specified)
       if (device.deviceId === 'RESQ-NODE-01' || devices.length === 1) {
@@ -85,8 +80,6 @@ const runSimulationTick = async () => {
         } else if (currentScenario === 'water_leak' || currentScenario === 'water') {
           state.water = true;
           state.waterLevel = Math.round(75 + Math.random() * 20);
-        } else if (currentScenario === 'crowded_room' || currentScenario === 'person_count') {
-          state.personCount = Math.round(14 + Math.random() * 5);
         } else if (currentScenario === 'high_heat') {
           state.temp = 54.0 + (Math.random() * 5);
           state.gas = 130;
@@ -101,7 +94,6 @@ const runSimulationTick = async () => {
           state.vibration = 4.2;
           state.water = true;
           state.waterLevel = 85;
-          state.personCount = 12;
         }
       }
 
@@ -124,7 +116,6 @@ const runSimulationTick = async () => {
         vibration: state.vibration,
         water: state.water,
         waterLevel: state.waterLevel,
-        personCount: state.personCount,
         isSimulated: true,
         batteryLevel: 98,
         signalRssi: -58 - Math.floor(Math.random() * 10),
@@ -145,7 +136,6 @@ const runSimulationTick = async () => {
         vibration: state.vibration,
         water: state.water,
         waterLevel: state.waterLevel,
-        personCount: state.personCount,
         timestamp: reading.timestamp,
       };
       await device.save();

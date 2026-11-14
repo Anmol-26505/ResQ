@@ -52,7 +52,6 @@ const verifyDeviceApiKey = async (req, res, next) => {
           'tilt',
           'earthquake',
           'water',
-          'personCount',
           'distance',
           'mpu6050',
           'ultrasonic',
