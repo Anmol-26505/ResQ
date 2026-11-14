@@ -191,9 +191,13 @@ const HomePage = () => {
   const tiltAngle = currentData.tiltAngle !== undefined && currentData.tiltAngle !== null ? currentData.tiltAngle : null;
   const earthquakeDetected = Boolean(currentData.earthquake);
   const vibration = currentData.vibration !== undefined && currentData.vibration !== null ? currentData.vibration : 0.04;
-  const waterDetected = Boolean(currentData.water);
-  const waterLevel = currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : 0;
-  const distance = currentData.distance !== undefined && currentData.distance !== null ? currentData.distance : null;
+  const waterDetected = Boolean(currentData.hasWaterSensor && currentData.water);
+  const hasWaterSensor = Boolean(
+    currentData.hasWaterSensor === true ||
+    (currentData.isSimulated && (currentData.water === true || (currentData.waterLevel && currentData.waterLevel > 0)))
+  );
+  const waterLevel = hasWaterSensor && currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : null;
+  const distance = currentData.distance !== undefined && currentData.distance !== null && currentData.distance > 0 ? currentData.distance : null;
 
   const isDeviceOnline = selectedDevice?.status === 'online' || (currentData.timestamp && (Date.now() - new Date(currentData.timestamp).getTime()) < 60000);
   const lastTimestamp = currentData.timestamp
@@ -203,20 +207,31 @@ const HomePage = () => {
   // Hazard conditions
   const isFireHazard = flameDetected || temp > 50;
   const isSmokeHazard = smoke > 200 || gas > 200;
-  const isTiltHazard = tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) > 15);
-  const isQuakeHazard = earthquakeDetected || vibration > 0.40;
-  const isWaterHazard = waterDetected || waterLevel > 40 || (distance !== null && distance < 12);
+  const isTiltHazard = tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) >= 10);
+  const isQuakeHazard = earthquakeDetected || vibration >= 0.25;
+  
+  // Water hazard is only true if a genuine water sensor is present AND triggered, or simulated in test mode
+  const isWaterHazard = Boolean(hasWaterSensor && (waterDetected || (waterLevel !== null && waterLevel > 40)));
 
-  const anyHazardActive = isFireHazard || isSmokeHazard || isTiltHazard || isQuakeHazard || isWaterHazard || activeAlerts.length > 0;
+  // Filter out any false/stale water alerts (e.g. 0% reading or no sensor) from blocking the dashboard
+  const genuineActiveAlerts = activeAlerts.filter((a) => {
+    if (a.sensorType === 'water' || a.sensorType === 'waterLevel') {
+      return Boolean(hasWaterSensor && (a.readingValue === true || Number(a.readingValue) > 40));
+    }
+    return true;
+  });
+
+  const anyHazardActive = isFireHazard || isSmokeHazard || isTiltHazard || isQuakeHazard || isWaterHazard || genuineActiveAlerts.length > 0;
 
   // Web Audio Alarm Lifecycle: play continuous siren when hazard is active
   useEffect(() => {
     if (anyHazardActive) {
+      // Prioritize hazards: Fire > Earthquake > Gas > Tilt
       let hazardType = 'fire';
       if (isFireHazard) hazardType = 'fire';
+      else if (isQuakeHazard) hazardType = 'earthquake';
       else if (isSmokeHazard) hazardType = 'gas';
       else if (isTiltHazard) hazardType = 'tilt';
-      else if (isQuakeHazard) hazardType = 'earthquake';
 
       if (isAudioUnlocked && !isMuted) {
         audioAlarmService.startAlarm(hazardType);
@@ -224,11 +239,34 @@ const HomePage = () => {
     } else {
       audioAlarmService.stopAlarm();
     }
+  }, [anyHazardActive, isFireHazard, isSmokeHazard, isTiltHazard, isQuakeHazard, isAudioUnlocked, isMuted]);
 
+  // Clean up audio on unmount
+  useEffect(() => {
     return () => {
       audioAlarmService.stopAlarm();
     };
-  }, [anyHazardActive, isFireHazard, isSmokeHazard, isTiltHazard, isQuakeHazard, isAudioUnlocked, isMuted]);
+  }, []);
+
+  // Auto-unlock Web Audio on first interaction anywhere on page (satisfies browser gesture autoplay policy)
+  useEffect(() => {
+    const handleFirstGesture = () => {
+      if (!isAudioUnlocked) {
+        const unlocked = audioAlarmService.init();
+        if (unlocked) {
+          setIsAudioUnlocked(true);
+        }
+      }
+    };
+
+    window.addEventListener('pointerdown', handleFirstGesture, { once: true });
+    window.addEventListener('keydown', handleFirstGesture, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
+  }, [isAudioUnlocked]);
 
   // Handle User Audio Activation (satisfies browser gesture autoplay policy)
   const handleToggleAudio = () => {
@@ -561,7 +599,13 @@ const HomePage = () => {
                   ? `📐 Structural building tilt (${tiltAngle ?? 16}°) confirmed!`
                   : isQuakeHazard
                   ? `⚠️ Seismic vibration tremor (${vibration}g) registered!`
-                  : `💧 Water accumulation detected on floor (Moisture Level: ${waterLevel}%)!`}
+                  : isWaterHazard
+                  ? (currentData?.isSimulated
+                      ? `💧 [SIMULATED TEST] Water leak / flood scenario active (Simulated Level: ${waterLevel || 85}%)!`
+                      : `💧 Water accumulation detected on floor (Moisture Level: ${waterLevel}%)!`)
+                  : genuineActiveAlerts.length > 0
+                  ? `⚠️ ${genuineActiveAlerts[0].title}: ${genuineActiveAlerts[0].message || 'Alert active'}`
+                  : '🟢 Safety monitoring active: All systems nominal.'}
               </p>
             </div>
           </div>
@@ -771,7 +815,7 @@ const HomePage = () => {
               <span className="text-xs text-slate-400 font-semibold uppercase block">Relative Structural Shift & Tremor</span>
               <div
                 className={`text-3xl font-black font-mono mt-1 ${
-                  vibration > 0.40 || isTiltHazard ? 'text-orange-600 animate-pulse' : 'text-emerald-600'
+                  vibration >= 0.25 || isTiltHazard ? 'text-orange-600 animate-pulse' : 'text-emerald-600'
                 }`}
               >
                 {tiltAngle !== null ? `${tiltAngle}° Relative Tilt` : (vibration > 0 ? `${vibration} g` : '0° Upright')}
@@ -780,7 +824,7 @@ const HomePage = () => {
                 {isTiltHazard
                   ? '⚠️ Sustained structural building tilt confirmed relative to calibrated baseline!'
                   : (isQuakeHazard
-                    ? `⚠️ Seismic shock deviation: ${vibration} g (Exceeds 0.40g threshold)!`
+                    ? `⚠️ Seismic shock deviation: ${vibration} g (Exceeds 0.25g threshold)!`
                     : `Dynamic Vibration: ${vibration} g (Stationary noise filtered) • Foundation level`)}
               </span>
             </div>
@@ -818,14 +862,18 @@ const HomePage = () => {
               <div className="flex items-center gap-2.5">
                 <div
                   className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
-                    isWaterHazard ? 'bg-cyan-600 text-white animate-bounce' : 'bg-cyan-50 text-cyan-600'
+                    isWaterHazard
+                      ? 'bg-cyan-600 text-white animate-bounce'
+                      : !hasWaterSensor
+                      ? 'bg-slate-100 text-slate-400'
+                      : 'bg-cyan-50 text-cyan-600'
                   }`}
                 >
                   <Droplets className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-base">Water & Distance</h3>
-                  <span className="text-[11px] text-slate-500 font-medium">HC-SR04 Ultrasonic (D6/D7)</span>
+                  <h3 className="font-bold text-slate-900 text-base">Water & Proximity</h3>
+                  <span className="text-[11px] text-slate-500 font-medium">HC-SR04 Proximity • Floor Probe (Optional)</span>
                 </div>
               </div>
 
@@ -833,48 +881,50 @@ const HomePage = () => {
                 className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
                   isWaterHazard
                     ? 'bg-cyan-600 text-white shadow-sm'
+                    : !hasWaterSensor
+                    ? 'bg-slate-100 text-slate-600'
                     : 'bg-emerald-100 text-emerald-800'
                 }`}
               >
-                {isWaterHazard ? 'Water Leak Alert!' : 'Dry & Normal'}
+                {isWaterHazard ? 'Water Leak Alert!' : (!hasWaterSensor ? 'Sensor Not Connected' : 'Dry & Normal')}
               </span>
             </div>
 
             {/* Water & Distance Status Callout */}
             <div className="my-5 p-4 rounded-2xl bg-white/80 border border-slate-200/80 shadow-sm text-center">
-              <span className="text-xs text-slate-400 font-semibold uppercase block">Ultrasonic Distance / Water Level</span>
+              <span className="text-xs text-slate-400 font-semibold uppercase block">Ultrasonic Distance / Moisture</span>
               <div
                 className={`text-3xl font-black font-mono mt-1 ${
-                  isWaterHazard ? 'text-cyan-600 animate-pulse' : 'text-emerald-600'
+                  isWaterHazard ? 'text-cyan-600 animate-pulse' : 'text-slate-800'
                 }`}
               >
-                {distance !== null ? `${distance} cm` : (waterLevel > 0 ? `${waterLevel}%` : (waterDetected ? 'LEAK DETECTED' : 'DRY'))}
+                {distance !== null ? `${distance} cm Range` : (hasWaterSensor && waterLevel !== null ? `${waterLevel}%` : 'Proximity Standby')}
               </div>
               <span className="text-[11px] text-slate-500 mt-1 block">
                 {distance !== null
-                  ? `Echo distance: ${distance} cm • ${isWaterHazard ? '⚠️ Liquid level high!' : 'Surface distance normal'}`
-                  : (isWaterHazard ? '💧 Liquid accumulation detected on floor!' : 'Floor dry; liquid level nominal')}
+                  ? `Echo distance: ${distance} cm • Floor Probe: ${hasWaterSensor ? (isWaterHazard ? '⚠️ Liquid Detected!' : 'Surface dry') : 'SENSOR NOT CONNECTED'}`
+                  : (hasWaterSensor ? (isWaterHazard ? '💧 Liquid accumulation detected on floor!' : 'Floor dry; normal') : 'Moisture probe not installed on physical node')}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Ultrasonic Range</span>
-                <span className={`text-base font-bold font-mono ${distance !== null && distance < 15 ? 'text-cyan-600' : 'text-emerald-700'}`}>
+                <span className="text-base font-bold font-mono text-slate-700">
                   {distance !== null ? `${distance} cm` : 'Active'}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-400 text-[10px] uppercase font-bold block">Flood State</span>
-                <span className="text-base font-bold font-mono text-slate-700">
-                  {waterDetected || waterLevel > 20 || (distance !== null && distance < 15) ? 'FLOOD ALERT' : 'DRY'}
+                <span className="text-slate-400 text-[10px] uppercase font-bold block">Floor Moisture Probe</span>
+                <span className={`text-base font-bold font-mono ${isWaterHazard ? 'text-cyan-600' : 'text-slate-600'}`}>
+                  {hasWaterSensor ? (isWaterHazard ? 'FLOOD ALERT' : `${waterLevel ?? 0}% (Dry)`) : 'Not Installed (N/A)'}
                 </span>
               </div>
             </div>
           </div>
 
           <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Level Sensor: {isWaterHazard ? 'High Water Alert' : 'Normal Range'}</span>
+            <span>Water Emergency: {isWaterHazard ? 'ACTIVE ALERT' : 'INACTIVE'}</span>
             <span className="font-semibold text-slate-700">HC-SR04 D6/D7</span>
           </div>
         </div>

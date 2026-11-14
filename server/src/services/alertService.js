@@ -35,16 +35,30 @@ const evaluateCondition = (readingValue, operator, thresholdValue) => {
 const processReadingAlerts = async (reading, device) => {
   try {
     // Find all enabled rules applicable to ALL devices or this specific device
-    const rules = await AlertRule.find({
+    let rules = await AlertRule.find({
       isEnabled: true,
       $or: [{ deviceId: 'ALL' }, { deviceId: reading.deviceId.toUpperCase() }],
     });
 
-    if (!rules || rules.length === 0) return [];
+    // Fallback baseline rules if none configured in the database yet
+    if (!rules || rules.length === 0) {
+      rules = [
+        { name: 'Critical Fire Detection', description: 'Flame sensor triggered', sensorType: 'flame', operator: '==', thresholdValue: true, severity: 'critical', cooldownMinutes: 2 },
+        { name: 'Earthquake Seismic Shock', description: 'Vibration tremor exceeded threshold', sensorType: 'earthquake', operator: '==', thresholdValue: true, severity: 'critical', cooldownMinutes: 2 },
+        { name: 'Structural Building Tilt', description: 'Building tilt exceeded safety limit', sensorType: 'tilt', operator: '==', thresholdValue: true, severity: 'critical', cooldownMinutes: 2 },
+        { name: 'Hazardous Gas Concentration', description: 'Gas concentration exceeds limit', sensorType: 'gas', operator: '>', thresholdValue: 200, severity: 'critical', cooldownMinutes: 2 },
+        { name: 'Critical Flood Alert', description: 'Water detected on facility floor', sensorType: 'water', operator: '==', thresholdValue: true, severity: 'critical', cooldownMinutes: 2 },
+      ];
+    }
 
     const generatedAlerts = [];
 
     for (const rule of rules) {
+      // Skip water / moisture alert evaluation if device has no water sensor installed
+      if ((rule.sensorType === 'water' || rule.sensorType === 'waterLevel') && !reading.hasWaterSensor && !reading.isSimulated) {
+        continue;
+      }
+
       const sensorVal = reading[rule.sensorType];
       if (sensorVal === undefined || sensorVal === null) continue;
 
@@ -89,14 +103,16 @@ const processReadingAlerts = async (reading, device) => {
           sensorType: rule.sensorType,
           readingValue: sensorVal,
           thresholdValue: rule.thresholdValue,
-          rule: rule._id,
+          rule: rule._id || null,
           isSimulated: reading.isSimulated || false,
           timestamp: new Date(),
         });
 
-        // Update rule lastTriggeredAt
-        rule.lastTriggeredAt = new Date();
-        await rule.save();
+        // Update rule lastTriggeredAt if rule is a Mongoose document
+        if (typeof rule.save === 'function') {
+          rule.lastTriggeredAt = new Date();
+          await rule.save();
+        }
 
         // Broadcast alert in real-time
         broadcastAlert(newAlert);

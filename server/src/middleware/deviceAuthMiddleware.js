@@ -2,7 +2,7 @@ const Device = require('../models/Device');
 
 /**
  * Authenticate incoming IoT requests via device API Key.
- * Looks for header 'x-api-key', Bearer token, JSON body 'apiKey', or query param.
+ * Checks HTTP header 'x-api-key', process.env.DEVICE_API_KEY, registered device key, or JSON body.
  */
 const verifyDeviceApiKey = async (req, res, next) => {
   const apiKey =
@@ -25,18 +25,20 @@ const verifyDeviceApiKey = async (req, res, next) => {
 
   const deviceId = (rawDeviceId || 'RESQ-NODE-01').toUpperCase();
 
-  // If no apiKey provided: allow only for default primary node RESQ-NODE-01 or /api/sensors/update
-  if (!apiKey && deviceId !== 'RESQ-NODE-01') {
+  // Strict check: API key MUST be provided
+  if (!apiKey) {
     return res.status(401).json({
       success: false,
-      message: 'Unauthorized: Missing device API key in x-api-key header, Authorization Bearer, or JSON body "apiKey"',
+      message: 'Unauthorized: Missing device API key in x-api-key HTTP header',
     });
   }
 
   try {
+    const envApiKey = process.env.DEVICE_API_KEY ? process.env.DEVICE_API_KEY.trim() : null;
+
     let device = await Device.findOne({ deviceId });
 
-    // If default primary device doesn't exist yet (fresh DB), auto-provision it
+    // Auto-provision primary hardware node if first time booting on fresh DB
     if (!device && deviceId === 'RESQ-NODE-01') {
       device = await Device.create({
         deviceId: 'RESQ-NODE-01',
@@ -57,7 +59,7 @@ const verifyDeviceApiKey = async (req, res, next) => {
           'ultrasonic',
           'mq2',
         ],
-        apiKey: apiKey || 'resq_dev_node01_alpha_9882a1',
+        apiKey: envApiKey || apiKey || 'resq_iot_secure_key_2026',
         status: 'online',
         lastSeenAt: new Date(),
       });
@@ -78,8 +80,14 @@ const verifyDeviceApiKey = async (req, res, next) => {
       });
     }
 
-    // If an API key was explicitly supplied, verify it matches
-    if (apiKey && device.apiKey !== apiKey) {
+    // Verify key against environment variable (priority 1) or registered device key (priority 2)
+    const isAuthorized =
+      (envApiKey && apiKey === envApiKey) ||
+      (device.apiKey && apiKey === device.apiKey) ||
+      (!envApiKey && !device.apiKey && apiKey === 'resq_iot_secure_key_2026') ||
+      (!envApiKey && apiKey === 'resq_iot_secure_key_2026');
+
+    if (!isAuthorized) {
       return res.status(401).json({
         success: false,
         message: 'Unauthorized: Invalid device API key',

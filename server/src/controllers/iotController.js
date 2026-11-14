@@ -21,29 +21,24 @@ const evaluateTiltWithHysteresis = (deviceId, tiltAngle, rawTiltFlag) => {
     lastReadingTime: Date.now(),
   };
 
-  if (tiltAngle !== null && !isNaN(tiltAngle)) {
-    const absAngle = Math.abs(tiltAngle);
-    if (absAngle > 15.0) {
-      tracker.consecutiveTiltCount += 1;
-      // Require at least 2 consecutive readings to confirm sustained structural tilt
-      if (tracker.consecutiveTiltCount >= 2) {
-        tracker.isConfirmedTilt = true;
-      }
-    } else if (absAngle <= 12.0) {
-      // 3-degree hysteresis band: only clears when angle drops below 12 degrees
-      tracker.consecutiveTiltCount = 0;
-      tracker.isConfirmedTilt = false;
+  const isAngleExceeded = tiltAngle !== null && !isNaN(tiltAngle) && Math.abs(tiltAngle) >= 10.0;
+  const isAngleBelowReset = tiltAngle !== null && !isNaN(tiltAngle) && Math.abs(tiltAngle) <= 7.0;
+
+  if (isAngleExceeded) {
+    tracker.consecutiveTiltCount += 1;
+    if (tracker.consecutiveTiltCount >= 2) {
+      tracker.isConfirmedTilt = true;
     }
-  } else if (rawTiltFlag !== undefined) {
-    if (Boolean(rawTiltFlag)) {
-      tracker.consecutiveTiltCount += 1;
-      if (tracker.consecutiveTiltCount >= 2) {
-        tracker.isConfirmedTilt = true;
-      }
-    } else {
-      tracker.consecutiveTiltCount = 0;
-      tracker.isConfirmedTilt = false;
-    }
+  } else if (isAngleBelowReset) {
+    tracker.consecutiveTiltCount = 0;
+    tracker.isConfirmedTilt = false;
+  }
+
+  // If the edge microcontroller firmware explicitly determined tilt (holding angle tilted), honor it
+  if (rawTiltFlag === true) {
+    tracker.isConfirmedTilt = true;
+  } else if (rawTiltFlag === false && !isAngleExceeded) {
+    tracker.isConfirmedTilt = false;
   }
 
   tracker.lastReadingTime = Date.now();
@@ -109,17 +104,31 @@ const postReading = async (req, res, next) => {
       vibration = 0.04;
     }
 
-    // Seismic shock triggers only when vibration exceeds 0.40g or edge confirmation
-    const earthquake = Boolean(payload.earthquake !== undefined ? payload.earthquake : (rawSensors.earthquake !== undefined ? rawSensors.earthquake : (vibration >= 0.40)));
-
-    // Water & Flood (Ultrasonic or probe)
-    const water = Boolean(payload.water !== undefined ? payload.water : (payload.waterLeak !== undefined ? payload.waterLeak : (rawSensors.water !== undefined ? rawSensors.water : false)));
-    const waterLevel = payload.waterLevel !== undefined ? Number(payload.waterLevel) : (rawSensors.waterLevel !== undefined ? Number(rawSensors.waterLevel) : (water ? 90 : 0));
-
-    // Ultrasonic sensor distance (cm)
-    const distance = payload.distance !== undefined ? Number(payload.distance) : (payload.ultrasonic !== undefined ? Number(payload.ultrasonic) : (payload.distanceCm !== undefined ? Number(payload.distanceCm) : (rawSensors.distance !== undefined ? Number(rawSensors.distance) : null)));
+    // Seismic shock triggers when dynamic vibration exceeds 0.25g threshold OR explicit edge confirmation
+    const isVibrationCritical = vibration >= 0.25;
+    const earthquake = Boolean(payload.earthquake || rawSensors.earthquake || isVibrationCritical);
 
     const isSimulated = Boolean(payload.isSimulated || payload.simulated || false);
+
+    // Water & Moisture Sensor:
+    // Only evaluate water if a dedicated sensor is explicitly indicated or simulated scenario is running
+    const hasWaterSensor = Boolean(
+      payload.hasWaterSensor === true ||
+      rawSensors.hasWaterSensor === true ||
+      (isSimulated && (payload.water === true || (payload.waterLevel !== undefined && Number(payload.waterLevel) > 0)))
+    );
+
+    const water = hasWaterSensor
+      ? Boolean(payload.water !== undefined ? payload.water : (payload.waterLeak !== undefined ? payload.waterLeak : (rawSensors.water !== undefined ? rawSensors.water : false)))
+      : false;
+
+    const waterLevel = hasWaterSensor
+      ? (payload.waterLevel !== undefined && payload.waterLevel !== null ? Number(payload.waterLevel) : (rawSensors.waterLevel !== undefined ? Number(rawSensors.waterLevel) : (water ? 90 : 0)))
+      : null;
+
+    // Ultrasonic sensor distance (cm) - physical distance only, NEVER used to trigger false floor water alerts
+    const rawDistance = payload.distance !== undefined ? Number(payload.distance) : (payload.ultrasonic !== undefined ? Number(payload.ultrasonic) : (payload.distanceCm !== undefined ? Number(payload.distanceCm) : (rawSensors.distance !== undefined ? Number(rawSensors.distance) : null)));
+    const distance = (rawDistance !== null && !isNaN(rawDistance) && rawDistance > 0) ? rawDistance : null;
     const readingTimestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
 
     // Basic validity checks
@@ -148,6 +157,7 @@ const postReading = async (req, res, next) => {
       tiltAngle,
       earthquake,
       vibration,
+      hasWaterSensor,
       water,
       waterLevel,
       distance,
@@ -171,6 +181,7 @@ const postReading = async (req, res, next) => {
         tiltAngle,
         earthquake,
         vibration,
+        hasWaterSensor,
         water,
         waterLevel,
         distance,
@@ -346,8 +357,10 @@ const getHazardStatus = async (req, res, next) => {
       if (r.tilt) hasTilt = true;
       if (r.earthquake) hasEarthquake = true;
       if (r.vibration !== undefined && r.vibration !== null && r.vibration > maxVibration) maxVibration = r.vibration;
-      if (r.water) hasWater = true;
+      if (r.hasWaterSensor && r.water) hasWater = true;
     });
+
+    const hasWaterHardware = devices.some((d) => d.latestReading?.hasWaterSensor);
 
     const isCritical = hasFire || hasEarthquake || hasTilt || hasWater || maxSmoke > 400 || activeAlerts.some((a) => a.severity === 'critical');
     const isWarning = !isCritical && (maxSmoke > 250 || activeAlerts.some((a) => a.severity === 'warning'));
@@ -378,7 +391,8 @@ const getHazardStatus = async (req, res, next) => {
         },
         waterLeakage: {
           detected: hasWater,
-          status: hasWater ? 'CRITICAL_FLOOD_LEAK' : 'DRY',
+          hasSensor: hasWaterHardware,
+          status: hasWater ? 'CRITICAL_FLOOD_LEAK' : (hasWaterHardware ? 'DRY' : 'NOT_CONNECTED'),
         },
       },
       recentActiveAlerts: activeAlerts.slice(0, 5).map((a) => ({

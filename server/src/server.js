@@ -50,6 +50,26 @@ const startServer = async () => {
       await seedData(false);
     }
 
+    // Auto-resolve any legacy false water alerts where water sensor was unavailable or 0%
+    const Alert = require('./models/Alert');
+    await Alert.updateMany(
+      {
+        sensorType: { $in: ['water', 'waterLevel'] },
+        status: 'active',
+        $or: [
+          { readingValue: false },
+          { readingValue: 0 },
+          { readingValue: null },
+          { isSimulated: false, readingValue: { $lte: 0 } },
+        ],
+      },
+      {
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolutionNotes: 'Auto-resolved: No physical water/moisture sensor installed on hardware',
+      }
+    );
+
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`=================================================`);
       console.log(`🛡️  ResQ IoT Emergency Monitoring Platform Backend`);

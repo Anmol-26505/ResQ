@@ -177,11 +177,15 @@ class AudioAlarmService {
    * Start continuous alarm loop for a specific active hazard
    */
   startAlarm(hazardType = 'fire') {
+    if (this.isPlaying && this.activePattern === hazardType && this.currentLoopInterval) {
+      return; // Already playing this hazard pattern seamlessly without stutter
+    }
     this.activePattern = hazardType;
     this.isPlaying = true;
 
     if (this.currentLoopInterval) {
       clearInterval(this.currentLoopInterval);
+      this.currentLoopInterval = null;
     }
 
     const playPattern = () => {

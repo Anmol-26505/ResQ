@@ -51,7 +51,11 @@ const sensorReadingSchema = new mongoose.Schema(
     },
     waterLevel: {
       type: Number,
-      default: 0,
+      default: null,
+    },
+    hasWaterSensor: {
+      type: Boolean,
+      default: false,
     },
     distance: {
       type: Number,

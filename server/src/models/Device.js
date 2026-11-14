@@ -60,6 +60,7 @@ const deviceSchema = new mongoose.Schema(
       vibration: Number,
       water: Boolean,
       waterLevel: Number,
+      hasWaterSensor: Boolean,
       distance: Number,
       tiltAngle: Number,
       mpu6050: {

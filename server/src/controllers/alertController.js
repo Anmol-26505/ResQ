@@ -22,6 +22,13 @@ const getAlerts = async (req, res, next) => {
       filter.deviceId = deviceId.toUpperCase();
     }
 
+    // Filter out false-positive water alerts where reading value was false, 0, or null
+    if (filter.status === 'active') {
+      filter.$nor = [
+        { sensorType: { $in: ['water', 'waterLevel'] }, readingValue: { $in: [false, 0, '0', null] } },
+      ];
+    }
+
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
     const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
     const skip = (parsedPage - 1) * parsedLimit;

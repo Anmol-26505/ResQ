@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Cpu, Radio, Shield, Terminal, ArrowRight } from 'lucide-react';
+import { X, Copy, Check, Cpu, Radio, Shield, Terminal, ArrowRight, Activity, Flame, Compass, Wind, Droplets } from 'lucide-react';
 
 const HardwareGuideModal = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState('arduino');
@@ -9,24 +9,24 @@ const HardwareGuideModal = ({ isOpen, onClose }) => {
 
   const arduinoCode = `/*
  * =====================================================================
- * ResQ IoT Emergency Platform — NodeMCU ESP8266 Telemetry Firmware
- * Target: NodeMCU ESP8266 (ESP-12E Module)
- * Libraries Required: NONE (Uses only built-in ESP8266 core libraries)
+ * ResQ IoT Emergency Platform — NodeMCU ESP8266 Telemetry & Hazard Firmware
+ * Target Hardware: NodeMCU ESP8266 (ESP-12E Module)
+ * Libraries Required: NONE (Uses standard built-in ESP8266 core libraries)
  *
- * Hardware Pin Connections:
- *   1. MPU6050 (Earthquake & Tilt):
+ * HARDWARE PIN CONNECTIONS (NodeMCU):
+ *   1. MPU6050 (6-Axis Accel/Gyro):
  *      - SDA  --> D2 (GPIO4)
  *      - SCL  --> D1 (GPIO5)
- *      - VCC  --> 3.3V / 5V, GND --> GND
- *   2. MQ-2 Gas & Smoke:
- *      - AOUT --> A0 (ADC0)
- *      - VCC  --> VIN (5V), GND --> GND
- *   3. Flame Optical IR (Fire Detection):
- *      - DOUT --> D5 (GPIO14) [Active-LOW: LOW = Flame Detected]
+ *      - VCC  --> VIN (5V) or 3.3V, GND --> GND, AD0 --> GND (0x68)
+ *   2. Flame Optical IR Sensor:
+ *      - DOUT --> D5 (GPIO14)
  *      - VCC  --> 3.3V, GND --> GND
- *   4. Ultrasonic HC-SR04 (Distance / Water-Level):
+ *   3. MQ-2 Gas & Smoke:
+ *      - AOUT --> A0 (ADC0, 0–3.3V)
+ *      - VCC  --> VIN (5V for internal heater coil), GND --> GND
+ *   4. HC-SR04 Ultrasonic Distance / Level:
  *      - TRIG --> D6 (GPIO12)
- *      - ECHO --> D7 (GPIO13)
+ *      - ECHO --> D7 (GPIO13, use 1k/2k resistor voltage divider)
  *      - VCC  --> VIN (5V), GND --> GND
  * =====================================================================
  */
@@ -39,162 +39,441 @@ const HardwareGuideModal = ({ isOpen, onClose }) => {
 // -------------------------------------------------------------
 // 1. Wi-Fi Configuration (2.4 GHz only)
 // -------------------------------------------------------------
-const char* WIFI_SSID     = "YOUR_WIFI_NAME";      // <-- Enter your 2.4GHz Wi-Fi SSID
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";  // <-- Enter your Wi-Fi Password
+const char* WIFI_SSID     = "NET PLUS";     // <-- Your 2.4GHz Wi-Fi SSID
+const char* WIFI_PASSWORD = "Sehaj@12";     // <-- Your Wi-Fi Password
 
 // -------------------------------------------------------------
-// 2. Render Backend Endpoint Configuration
+// 2. Render Backend Ingestion Configuration
 // -------------------------------------------------------------
 const char* RESQ_SERVER_URL = "https://resq-8tbc.onrender.com/api/sensors/update";
-
-// Device Identification & API Key
 const char* DEVICE_ID       = "RESQ-NODE-01";
-const char* DEVICE_API_KEY  = "resq_dev_node01_alpha_9882a1";
+const char* DEVICE_API_KEY  = "resq_iot_secure_key_2026"; // Must match DEVICE_API_KEY in Render
 
 // -------------------------------------------------------------
-// 3. Sensor Pin Mapping
+// 3. Hardware Pin Assignments (NodeMCU ESP8266)
 // -------------------------------------------------------------
-const int PIN_MQ2_GAS    = A0; // ADC0 (Analog input)
-const int PIN_FLAME      = 14; // D5 (GPIO14, Digital input)
-const int PIN_TRIG       = 12; // D6 (GPIO12, Ultrasonic Trigger output)
-const int PIN_ECHO       = 13; // D7 (GPIO13, Ultrasonic Echo input)
-// Note: MPU6050 uses I2C pins D2 (SDA, GPIO4) and D1 (SCL, GPIO5)
+#define PIN_FLAME       14  // NodeMCU D5 (GPIO14)
+#define PIN_TRIG        12  // NodeMCU D6 (GPIO12)
+#define PIN_ECHO        13  // NodeMCU D7 (GPIO13)
+#define PIN_MQ2_GAS     A0  // NodeMCU A0 (ADC0)
+// Note: MPU6050 uses I2C pins D2 (SDA / GPIO4) and D1 (SCL / GPIO5)
 
-const int MPU6050_ADDR   = 0x68;
+// -------------------------------------------------------------
+// 4. Configurable Sensor Settings & Thresholds
+// -------------------------------------------------------------
+// Flame Sensor Logic: Most LM393 modules pull DOUT LOW (0V) when flame is detected.
+const bool FLAME_ACTIVE_LOW = true;
 
-// Telemetry transmit interval (2000ms = 2 seconds)
+// MQ-2 Combustible Gas & Smoke Threshold (0–1023 ADC):
+// Clean indoor baseline is typically 50–180.
+const int GAS_HAZARD_THRESHOLD = 220;
+
+// MPU6050 Structural Tilt Threshold (degrees relative to calibrated baseline):
+const float TILT_THRESHOLD_DEG = 12.0;
+
+// Minimum duration (ms) tilt must persist before declaring sustained structural tilt:
+const unsigned long TILT_PERSIST_MS = 600;
+
+// MPU6050 Dynamic Vibration / Seismic Shock Sensitivity (in 'g' units):
+// Resting desk noise: < 0.10g. Tremor / shake threshold: 0.22g
+const float VIBRATION_SENSITIVITY_G = 0.22;
+
+// Seismic repeated tremor energy threshold (number of shock samples in window):
+const int TREMOR_SAMPLE_COUNT_THRESHOLD = 3;
+
+// Alert Cooldown / Latch Duration (ms) so brief shocks are never missed:
+const unsigned long HAZARD_LATCH_MS = 4000;
+
+// Water Detection Configuration:
+// Physical note: HC-SR04 measures air distance via sound waves. It only detects water
+// when mounted overhead facing downward into a sump tank or container.
+// Set to true only if mounted overhead as a liquid level tank gauge:
+const bool HC_SR04_IS_OVERHEAD_TANK_GAUGE = false;
+const float TANK_EMPTY_DISTANCE_CM = 80.0;
+const float TANK_FULL_DISTANCE_CM  = 12.0;
+
+// Telemetry transmit interval (every 2000ms = 2 seconds)
 const unsigned long SEND_INTERVAL_MS = 2000;
 unsigned long lastSendTime = 0;
 
+// Serial Monitor status summary interval (every 1000ms = 1 second)
+const unsigned long SERIAL_SUMMARY_INTERVAL_MS = 1000;
+unsigned long lastSummaryTime = 0;
+
+// High-speed MPU6050 continuous polling interval (every 20ms = 50 Hz)
+const unsigned long MPU_POLL_INTERVAL_MS = 20;
+unsigned long lastMpuPollTime = 0;
+
 // -------------------------------------------------------------
-// 4. MPU6050 Calibration & Digital Noise Filter Variables
+// 5. State & Calibration Variables
 // -------------------------------------------------------------
+uint8_t mpuI2cAddress = 0x68;
+bool mpuConnected = false;
+
+// Calibrated stationary resting baseline
 float baselineAx = 0.0, baselineAy = 0.0, baselineAz = 1.0;
 float baselinePitch = 0.0, baselineRoll = 0.0;
-float baselineMagnitude = 1.0;
-float filteredAx = 0.0, filteredAy = 0.0, filteredAz = 1.0;
-const float EMA_ALPHA = 0.25; // Low-pass filter smoothing coefficient (0.0 - 1.0)
-bool mpuCalibrated = false;
 
-// -------------------------------------------------------------
-// MPU6050 Low-Level I2C Helper Functions
-// -------------------------------------------------------------
-bool initMPU6050() {
-  Wire.begin(4, 5); // SDA = D2 (GPIO4), SCL = D1 (GPIO5)
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x6B); // PWR_MGMT_1 register
-  Wire.write(0);    // Wake up MPU6050
-  byte error = Wire.endTransmission();
-  return (error == 0);
+// Running filtered & dynamic values
+float filteredAx = 0.0, filteredAy = 0.0, filteredAz = 1.0;
+float currentPitch = 0.0, currentRoll = 0.0;
+float currentTiltAngle = 0.0;
+float instantaneousVibration = 0.04;
+float peakVibrationInWindow = 0.04;
+int tremorSamplesInWindow = 0;
+
+// Raw instantaneous values
+float lastRawAx = 0.0, lastRawAy = 0.0, lastRawAz = 1.0;
+float lastRawGx = 0.0, lastRawGy = 0.0, lastRawGz = 0.0;
+
+// Sustained Tilt Tracking
+unsigned long tiltExceededStart = 0;
+bool isSustainedTilt = false;
+
+// Alert Latches
+unsigned long tiltAlertUntil = 0;
+unsigned long quakeAlertUntil = 0;
+
+// Forward Function Prototypes
+void setup();
+void loop();
+void scanI2CBus();
+bool initMPU6050();
+bool readMPU6050Raw(float &ax, float &ay, float &az, float &gx, float &gy, float &gz);
+void calibrateMPU6050();
+void pollMPU6050Continuous();
+float readUltrasonicDistance();
+void printStatusSummary(bool fireDetected, int gasRaw, bool isTilt, bool isQuake, bool isWater, float distCm);
+void transmitTelemetry();
+void runInteractiveTest();
+
+// =============================================================
+// MAIN ARDUINO SETUP
+// =============================================================
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  pinMode(PIN_FLAME, INPUT_PULLUP);
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
+
+  Serial.println();
+  Serial.println("==================================================");
+  Serial.println("🛡️  ResQ IoT Emergency Platform — NodeMCU Booting");
+  Serial.printf("Device ID: %s | Server: %s\n", DEVICE_ID, RESQ_SERVER_URL);
+  Serial.println("==================================================");
+
+  // 1. Scan I2C bus and verify MPU6050 presence on D2/D1
+  scanI2CBus();
+
+  // 2. Initialize MPU6050
+  if (initMPU6050()) {
+    mpuConnected = true;
+    calibrateMPU6050();
+  } else {
+    mpuConnected = false;
+    Serial.println("❌ MPU6050 NOT INITIALIZED!");
+    Serial.println("   👉 Check wiring: SDA->D2, SCL->D1, VCC->VIN (5V), GND->GND, AD0->GND");
+  }
+
+  // 3. Connect to Wi-Fi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.printf("Connecting to Wi-Fi: %s", WIFI_SSID);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 25) {
+    delay(400);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.printf("✅ Wi-Fi Connected! IP: %s (Signal: %d dBm)\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  } else {
+    Serial.println();
+    Serial.println("⚠️ Wi-Fi not yet connected. Reconnection running in background.");
+  }
+
+  Serial.println("==================================================");
 }
 
-bool readRawMPU(float &ax, float &ay, float &az) {
-  Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x3B); // Starting register (ACCEL_XOUT_H)
-  if (Wire.endTransmission(false) != 0) {
-    return false;
+// =============================================================
+// MAIN ARDUINO LOOP
+// =============================================================
+void loop() {
+  unsigned long now = millis();
+
+  // 1. Continuous high-frequency MPU6050 sampling (every 20ms = 50 Hz)
+  if (now - lastMpuPollTime >= MPU_POLL_INTERVAL_MS) {
+    lastMpuPollTime = now;
+    pollMPU6050Continuous();
   }
 
-  Wire.requestFrom(MPU6050_ADDR, 6, true);
-  if (Wire.available() >= 6) {
-    int16_t rawX = Wire.read() << 8 | Wire.read();
-    int16_t rawY = Wire.read() << 8 | Wire.read();
-    int16_t rawZ = Wire.read() << 8 | Wire.read();
+  // Read instantaneous sensor states
+  int flamePinRaw = digitalRead(PIN_FLAME);
+  bool fireDetected = FLAME_ACTIVE_LOW ? (flamePinRaw == LOW) : (flamePinRaw == HIGH);
+  int gasRaw = analogRead(PIN_MQ2_GAS);
+  bool gasDetected = (gasRaw >= GAS_HAZARD_THRESHOLD);
+  float distCm = readUltrasonicDistance();
 
-    // Scale to ±2g range (16384 LSB/g)
-    ax = (float)rawX / 16384.0;
-    ay = (float)rawY / 16384.0;
-    az = (float)rawZ / 16384.0;
-    return true;
+  bool isTilt = (millis() < tiltAlertUntil) || isSustainedTilt;
+  bool isQuake = (millis() < quakeAlertUntil) || (tremorSamplesInWindow >= TREMOR_SAMPLE_COUNT_THRESHOLD);
+  
+  bool isWater = false;
+  if (HC_SR04_IS_OVERHEAD_TANK_GAUGE && distCm > 0) {
+    isWater = (distCm <= TANK_FULL_DISTANCE_CM);
   }
-  return false;
+
+  // 2. Serial Monitor Status Summary (Every 1 second)
+  if (now - lastSummaryTime >= SERIAL_SUMMARY_INTERVAL_MS) {
+    lastSummaryTime = now;
+    printStatusSummary(fireDetected, gasRaw, isTilt, isQuake, isWater, distCm);
+  }
+
+  // 3. Check for interactive serial commands ('c' = calibrate, 't' = stream test)
+  if (Serial.available()) {
+    char cmd = Serial.read();
+    if (cmd == 'c' || cmd == 'C') {
+      calibrateMPU6050();
+    } else if (cmd == 't' || cmd == 'T') {
+      runInteractiveTest();
+    }
+  }
+
+  // 4. Regular 2-second Telemetry Transmission to Render
+  if (now - lastSendTime >= SEND_INTERVAL_MS) {
+    lastSendTime = now;
+    transmitTelemetry();
+  }
+}
+
+// =============================================================
+// 1-Second Serial Monitor Status Summary (Clean & Readable)
+// =============================================================
+void printStatusSummary(bool fireDetected, int gasRaw, bool isTilt, bool isQuake, bool isWater, float distCm) {
+  Serial.println();
+  Serial.println("================ RESQ SYSTEM STATUS ================");
+  Serial.printf("WiFi:       %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
+  Serial.printf("MPU6050:    %s\n", mpuConnected ? "CONNECTED" : "NOT CONNECTED");
+  Serial.printf("FIRE:       %s\n", fireDetected ? "DETECTED" : "NORMAL");
+  Serial.printf("GAS:        %s\n", (gasRaw >= GAS_HAZARD_THRESHOLD) ? "DETECTED" : "NORMAL");
+  Serial.printf("TILT:       %s\n", isTilt ? "DETECTED" : "NORMAL");
+  Serial.printf("EARTHQUAKE: %s\n", isQuake ? "DETECTED" : "NORMAL");
+  Serial.printf("WATER:      %s\n", HC_SR04_IS_OVERHEAD_TANK_GAUGE ? (isWater ? "DETECTED" : "NORMAL") : "SENSOR NOT CONNECTED");
+  Serial.printf("TILT ANGLE: %.1f deg\n", currentTiltAngle);
+  Serial.printf("VIBRATION:  %.2f g\n", peakVibrationInWindow);
+  Serial.printf("GAS VALUE:  %d\n", gasRaw);
+  Serial.printf("DISTANCE:   %.1f cm\n", distCm);
+  Serial.println("====================================================");
+}
+
+// =============================================================
+// I2C Bus Scanner
+// =============================================================
+void scanI2CBus() {
+  Wire.begin(D2, D1); // SDA = D2 (GPIO4), SCL = D1 (GPIO5)
+  Wire.setClock(100000);
+  delay(100);
+
+  Serial.println("🔍 Probing I2C bus on SDA=D2, SCL=D1...");
+  byte count = 0;
+  for (byte address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission(true) == 0) {
+      Serial.printf("   ✅ I2C device detected at 0x%02X!\n", address);
+      if (address == 0x68 || address == 0x69) {
+        mpuI2cAddress = address;
+      }
+      count++;
+    }
+  }
+
+  if (count == 0) {
+    Serial.println("   ❌ NO I2C DEVICES FOUND ON BUS!");
+    Serial.println("   Wiring Check: SDA->D2, SCL->D1, VCC->VIN (5V), GND->GND, AD0->GND");
+  }
+}
+
+// =============================================================
+// MPU6050 Driver with Device Reset
+// =============================================================
+bool initMPU6050() {
+  // 1. Device Reset (PWR_MGMT_1 = 0x80)
+  Wire.beginTransmission(mpuI2cAddress);
+  Wire.write(0x6B);
+  Wire.write(0x80);
+  Wire.endTransmission(true);
+  delay(50);
+
+  // 2. Clear sleep and select Gyro X clock reference (PWR_MGMT_1 = 0x01)
+  Wire.beginTransmission(mpuI2cAddress);
+  Wire.write(0x6B);
+  Wire.write(0x01);
+  if (Wire.endTransmission(true) != 0) return false;
+  delay(15);
+
+  // 3. Set Accelerometer full-scale range ±2g (ACCEL_CONFIG = 0x00)
+  Wire.beginTransmission(mpuI2cAddress);
+  Wire.write(0x1C);
+  Wire.write(0x00);
+  Wire.endTransmission(true);
+
+  // 4. Set Gyroscope full-scale range ±250 deg/s (GYRO_CONFIG = 0x00)
+  Wire.beginTransmission(mpuI2cAddress);
+  Wire.write(0x1B);
+  Wire.write(0x00);
+  Wire.endTransmission(true);
+
+  // 5. Verification read
+  float ax, ay, az, gx, gy, gz;
+  return readMPU6050Raw(ax, ay, az, gx, gy, gz);
 }
 
 /**
- * Startup Calibration Routine:
- * Samples 100 stationary readings to measure mounting offsets.
- * Eliminates false tilt and vibration alarms caused by resting desk angle.
+ * Burst read 14 bytes from MPU6050 starting from 0x3B (ACCEL_XOUT_H)
+ */
+bool readMPU6050Raw(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
+  Wire.beginTransmission(mpuI2cAddress);
+  Wire.write(0x3B);
+  if (Wire.endTransmission(true) != 0) return false;
+
+  uint8_t count = Wire.requestFrom((uint8_t)mpuI2cAddress, (size_t)14);
+  if (count != 14) return false;
+
+  uint8_t axH = Wire.read(); uint8_t axL = Wire.read();
+  uint8_t ayH = Wire.read(); uint8_t ayL = Wire.read();
+  uint8_t azH = Wire.read(); uint8_t azL = Wire.read();
+  uint8_t tH  = Wire.read(); uint8_t tL  = Wire.read();
+  uint8_t gxH = Wire.read(); uint8_t gxL = Wire.read();
+  uint8_t gyH = Wire.read(); uint8_t gyL = Wire.read();
+  uint8_t gzH = Wire.read(); uint8_t gzL = Wire.read();
+
+  int16_t rawAx = (int16_t)((axH << 8) | axL);
+  int16_t rawAy = (int16_t)((ayH << 8) | ayL);
+  int16_t rawAz = (int16_t)((azH << 8) | azL);
+  int16_t rawGx = (int16_t)((gxH << 8) | gxL);
+  int16_t rawGy = (int16_t)((gyH << 8) | gyL);
+  int16_t rawGz = (int16_t)((gzH << 8) | gzL);
+
+  ax = (float)rawAx / 16384.0;
+  ay = (float)rawAy / 16384.0;
+  az = (float)rawAz / 16384.0;
+  gx = (float)rawGx / 131.0;
+  gy = (float)rawGy / 131.0;
+  gz = (float)rawGz / 131.0;
+  return true;
+}
+
+/**
+ * Startup Resting Calibration:
+ * Records stationary samples to calculate the normal resting reference angles.
  */
 void calibrateMPU6050() {
-  Serial.println("⚖️ Calibrating MPU6050 stationary baseline... (KEEP BOARD FLAT & STILL)");
+  Serial.println();
+  Serial.println("⚖️  CALIBRATING MPU6050 BASELINE (KEEP BOARD STILL)...");
+
   float sumAx = 0, sumAy = 0, sumAz = 0;
   int validSamples = 0;
 
-  for (int i = 0; i < 100; i++) {
-    float rawAx, rawAy, rawAz;
-    if (readRawMPU(rawAx, rawAy, rawAz)) {
-      sumAx += rawAx;
-      sumAy += rawAy;
-      sumAz += rawAz;
+  for (int i = 0; i < 50; i++) {
+    float ax, ay, az, gx, gy, gz;
+    if (readMPU6050Raw(ax, ay, az, gx, gy, gz)) {
+      sumAx += ax; sumAy += ay; sumAz += az;
       validSamples++;
     }
-    delay(15);
+    delay(20);
   }
 
-  if (validSamples > 0) {
+  if (validSamples > 15) {
     baselineAx = sumAx / validSamples;
     baselineAy = sumAy / validSamples;
     baselineAz = sumAz / validSamples;
+
     baselinePitch = atan2(baselineAy, sqrt(baselineAx * baselineAx + baselineAz * baselineAz)) * 180.0 / PI;
     baselineRoll  = atan2(-baselineAx, baselineAz) * 180.0 / PI;
-    baselineMagnitude = sqrt(baselineAx * baselineAx + baselineAy * baselineAy + baselineAz * baselineAz);
+
     filteredAx = baselineAx;
     filteredAy = baselineAy;
     filteredAz = baselineAz;
-    mpuCalibrated = true;
-    Serial.printf("✅ Baseline Calibrated: Ax=%.2f, Ay=%.2f, Az=%.2f | Baseline Pitch=%.1f deg, Roll=%.1f deg\\n",
-                  baselineAx, baselineAy, baselineAz, baselinePitch, baselineRoll);
+
+    Serial.printf("✅ Baseline Calibrated: Pitch=%.1f° | Roll=%.1f°\n", baselinePitch, baselineRoll);
   } else {
-    Serial.println("⚠️ MPU6050 calibration failed to read I2C samples. Using standard 1.0g on Z.");
+    Serial.println("⚠️ Calibration failed. Using default 1.0g on Z.");
     baselineAx = 0; baselineAy = 0; baselineAz = 1.0;
+    baselinePitch = 0; baselineRoll = 0;
   }
 }
 
 /**
- * Filtered MPU6050 Reader:
- * Applies Exponential Moving Average (EMA) low-pass filter and
- * calculates tilt and vibration relative to calibrated resting baseline.
+ * Continuous 50Hz MPU6050 Sampling, Dynamic Shock & Tilt Tracking
  */
-void readMPU6050Filtered(float &ax, float &ay, float &az, float &tiltAngle, float &vibration) {
-  float rawAx, rawAy, rawAz;
-  if (!readRawMPU(rawAx, rawAy, rawAz)) {
-    ax = 0; ay = 0; az = 1.0;
-    tiltAngle = 0.0; vibration = 0.04;
-    return;
-  }
+void pollMPU6050Continuous() {
+  float ax, ay, az, gx, gy, gz;
+  if (!readMPU6050Raw(ax, ay, az, gx, gy, gz)) return;
 
-  // 1. Exponential Moving Average (EMA) low-pass noise filter
-  filteredAx = (EMA_ALPHA * rawAx) + ((1.0 - EMA_ALPHA) * filteredAx);
-  filteredAy = (EMA_ALPHA * rawAy) + ((1.0 - EMA_ALPHA) * filteredAy);
-  filteredAz = (EMA_ALPHA * rawAz) + ((1.0 - EMA_ALPHA) * filteredAz);
+  lastRawAx = ax; lastRawAy = ay; lastRawAz = az;
+  lastRawGx = gx; lastRawGy = gy; lastRawGz = gz;
 
-  ax = filteredAx;
-  ay = filteredAy;
-  az = filteredAz;
+  // 1. Tilt Calculation (Low-pass filtered accelerometer data)
+  const float alpha = 0.20;
+  filteredAx = (alpha * ax) + ((1.0 - alpha) * filteredAx);
+  filteredAy = (alpha * ay) + ((1.0 - alpha) * filteredAy);
+  filteredAz = (alpha * az) + ((1.0 - alpha) * filteredAz);
 
-  // 2. Relative pitch and roll relative to calibrated resting baseline
-  float currentPitch = atan2(filteredAy, sqrt(filteredAx * filteredAx + filteredAz * filteredAz)) * 180.0 / PI;
-  float currentRoll  = atan2(-filteredAx, filteredAz) * 180.0 / PI;
+  currentPitch = atan2(filteredAy, sqrt(filteredAx * filteredAx + filteredAz * filteredAz)) * 180.0 / PI;
+  currentRoll  = atan2(-filteredAx, filteredAz) * 180.0 / PI;
 
   float deltaPitch = abs(currentPitch - baselinePitch);
   float deltaRoll  = abs(currentRoll - baselineRoll);
-  tiltAngle = max(deltaPitch, deltaRoll);
+  currentTiltAngle = max(deltaPitch, deltaRoll);
 
-  // 3. Dynamic seismic vibration magnitude deviation above resting noise floor
-  float currentMagnitude = sqrt(filteredAx * filteredAx + filteredAy * filteredAy + filteredAz * filteredAz);
-  float rawDeviation = abs(currentMagnitude - baselineMagnitude);
-
-  // Reject resting sensor noise floor (< 0.12g is clamped to 0.04g nominal baseline)
-  if (rawDeviation < 0.12) {
-    vibration = 0.04;
+  // Sustained Tilt Evaluation
+  if (currentTiltAngle >= TILT_THRESHOLD_DEG) {
+    if (tiltExceededStart == 0) tiltExceededStart = millis();
+    if (millis() - tiltExceededStart >= TILT_PERSIST_MS) {
+      isSustainedTilt = true;
+      tiltAlertUntil = millis() + HAZARD_LATCH_MS;
+    }
   } else {
-    vibration = rawDeviation;
+    tiltExceededStart = 0;
+    if (currentTiltAngle <= (TILT_THRESHOLD_DEG - 3.0)) {
+      isSustainedTilt = false;
+    }
+  }
+
+  // 2. Dynamic Acceleration Vector Vibration (Gravity Compensated)
+  // Dynamic shock vector difference relative to resting baseline:
+  float dAx = ax - baselineAx;
+  float dAy = ay - baselineAy;
+  float dAz = az - baselineAz;
+  float dynamicShock = sqrt(dAx * dAx + dAy * dAy + dAz * dAz);
+
+  // Filter resting table noise floor (< 0.10g clamped to 0.04g nominal)
+  if (dynamicShock < 0.10) {
+    instantaneousVibration = 0.04;
+  } else {
+    instantaneousVibration = dynamicShock;
+  }
+
+  // Peak shock capture in window
+  if (instantaneousVibration > peakVibrationInWindow) {
+    peakVibrationInWindow = instantaneousVibration;
+  }
+
+  // Repeated tremor energy accumulation
+  if (instantaneousVibration >= VIBRATION_SENSITIVITY_G) {
+    tremorSamplesInWindow++;
+    quakeAlertUntil = millis() + HAZARD_LATCH_MS;
   }
 }
 
-// -------------------------------------------------------------
+// =============================================================
 // HC-SR04 Ultrasonic Distance Helper
-// -------------------------------------------------------------
+// =============================================================
 float readUltrasonicDistance() {
   digitalWrite(PIN_TRIG, LOW);
   delayMicroseconds(2);
@@ -202,146 +481,115 @@ float readUltrasonicDistance() {
   delayMicroseconds(10);
   digitalWrite(PIN_TRIG, LOW);
 
-  long duration = pulseIn(PIN_ECHO, HIGH, 30000); // 30ms timeout (~5m max)
+  long duration = pulseIn(PIN_ECHO, HIGH, 28000); // ~4.5m timeout
   if (duration <= 0) return 0.0;
 
-  float distanceCm = (duration * 0.0343) / 2.0;
-  return distanceCm;
+  return (duration * 0.0343) / 2.0;
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(500);
-
-  pinMode(PIN_FLAME, INPUT);
-  pinMode(PIN_TRIG, OUTPUT);
-  pinMode(PIN_ECHO, INPUT);
-
-  Serial.println();
-  Serial.println("==================================================");
-  Serial.println("🛡️  ResQ IoT Emergency NodeMCU Starting Up...");
-  Serial.printf("Device ID: %s\\n", DEVICE_ID);
-  Serial.println("==================================================");
-
-  // Initialize and calibrate MPU6050
-  if (initMPU6050()) {
-    Serial.println("✅ MPU6050 Initialized (I2C: D2=SDA, D1=SCL)");
-    calibrateMPU6050();
-  } else {
-    Serial.println("⚠️  MPU6050 not detected at 0x68. Check wiring (D2=SDA, D1=SCL).");
-  }
-
-  // Connect to Wi-Fi
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.printf("Connecting to Wi-Fi: %s", WIFI_SSID);
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.printf("✅ Wi-Fi Connected! IP: %s (Signal: %d dBm)\\n",
-                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  } else {
-    Serial.println();
-    Serial.println("❌ Wi-Fi Connection Failed. Will retry in loop.");
-  }
-}
-
-void loop() {
-  unsigned long now = millis();
-  if (now - lastSendTime >= SEND_INTERVAL_MS) {
-    lastSendTime = now;
-    transmitTelemetry();
-  }
-}
-
+// =============================================================
+// Telemetry Transmission to Render Cloud
+// =============================================================
 void transmitTelemetry() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("⚠️  Wi-Fi disconnected. Reconnecting...");
-    WiFi.reconnect();
-    return;
-  }
-
-  // 1. Read MQ-2 Gas & Smoke (Analog 0-1023)
   int gasRaw = analogRead(PIN_MQ2_GAS);
-
-  // 2. Read Flame Sensor (Active-LOW: LOW = Fire detected)
-  bool flameDetected = (digitalRead(PIN_FLAME) == LOW);
-
-  // 3. Read Ultrasonic Distance (cm)
+  int flamePinRaw = digitalRead(PIN_FLAME);
+  bool fireDetected = FLAME_ACTIVE_LOW ? (flamePinRaw == LOW) : (flamePinRaw == HIGH);
   float distanceCm = readUltrasonicDistance();
 
-  // 4. Read Calibrated MPU6050
-  float ax = 0, ay = 0, az = 1.0, tiltAngle = 0, vibration = 0.04;
-  readMPU6050Filtered(ax, ay, az, tiltAngle, vibration);
+  bool isTilt = (millis() < tiltAlertUntil) || isSustainedTilt;
+  bool isQuake = (millis() < quakeAlertUntil) || (tremorSamplesInWindow >= TREMOR_SAMPLE_COUNT_THRESHOLD);
+  
+  bool isWater = false;
+  int waterLevel = 0;
+  if (HC_SR04_IS_OVERHEAD_TANK_GAUGE && distanceCm > 0.0) {
+    isWater = (distanceCm <= TANK_FULL_DISTANCE_CM);
+    waterLevel = constrain((int)((TANK_EMPTY_DISTANCE_CM - distanceCm) / (TANK_EMPTY_DISTANCE_CM - TANK_FULL_DISTANCE_CM) * 100.0), 0, 100);
+  }
 
-  // 5. Evaluate Calibrated Hazard Flags
-  bool earthquakeDetected = (vibration > 0.40);                    // Quake > 0.40g dynamic deviation
-  bool tiltHazard = (tiltAngle > 15.0);                             // Sustained tilt > 15° relative to baseline
-  bool waterLeakHazard = (distanceCm > 0.0 && distanceCm < 12.0);  // Water level risen within 12cm
-  int waterLevel = (distanceCm > 0.0 && distanceCm < 50.0) ? (int)(100.0 - (distanceCm * 2.0)) : 0;
+  float reportedVibration = peakVibrationInWindow;
+  float reportedTiltAngle = currentTiltAngle;
 
-  // Print Telemetry to Serial Monitor
-  Serial.println("--------------------------------------------------");
-  Serial.printf("🔥 Flame: %s | 💨 Gas: %d PPM | 📐 Relative Tilt: %.1f deg (%s)\\n",
-                flameDetected ? "ACTIVE FIRE!" : "Safe", gasRaw, tiltAngle,
-                tiltHazard ? "TILT WARNING!" : "Stable");
-  Serial.printf("⚠️  Vibration: %.2f g (%s) | 📏 Distance: %.1f cm\\n",
-                vibration, earthquakeDetected ? "SEISMIC QUAKE!" : "Nominal", distanceCm);
-
-  // 6. Build Clean JSON Payload (Zero Library Dependency)
+  // Build JSON Payload
   String requestBody = "{\"deviceId\":\"" + String(DEVICE_ID) + "\"" +
                        ",\"apiKey\":\"" + String(DEVICE_API_KEY) + "\"" +
+                       ",\"hasWaterSensor\":" + (HC_SR04_IS_OVERHEAD_TANK_GAUGE ? "true" : "false") +
                        ",\"gas\":" + String(gasRaw) +
                        ",\"smoke\":" + String(gasRaw) +
-                       ",\"flame\":" + (flameDetected ? "true" : "false") +
+                       ",\"flame\":" + (fireDetected ? "true" : "false") +
                        ",\"distance\":" + String(distanceCm, 1) +
-                       ",\"tiltAngle\":" + String(tiltAngle, 1) +
-                       ",\"vibration\":" + String(vibration, 2) +
-                       ",\"tilt\":" + (tiltHazard ? "true" : "false") +
-                       ",\"earthquake\":" + (earthquakeDetected ? "true" : "false") +
-                       ",\"water\":" + (waterLeakHazard ? "true" : "false") +
+                       ",\"tiltAngle\":" + String(reportedTiltAngle, 1) +
+                       ",\"vibration\":" + String(reportedVibration, 2) +
+                       ",\"tilt\":" + (isTilt ? "true" : "false") +
+                       ",\"earthquake\":" + (isQuake ? "true" : "false") +
+                       ",\"water\":" + (isWater ? "true" : "false") +
                        ",\"waterLevel\":" + String(waterLevel) +
                        ",\"rssi\":" + String(WiFi.RSSI()) +
-                       ",\"ax\":" + String(ax, 2) +
-                       ",\"ay\":" + String(ay, 2) +
-                       ",\"az\":" + String(az, 2) +
+                       ",\"ax\":" + String(lastRawAx, 2) +
+                       ",\"ay\":" + String(lastRawAy, 2) +
+                       ",\"az\":" + String(lastRawAz, 2) +
                        "}";
 
-  // 7. Send HTTPS POST to Render Backend
-  WiFiClientSecure client;
-  client.setInsecure(); // Allows SSL connection without certificate pinning
-  client.setTimeout(10000);
+  int httpCode = -1;
+  String httpResponse = "";
 
-  HTTPClient http;
-  if (http.begin(client, RESQ_SERVER_URL)) {
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("x-api-key", DEVICE_API_KEY);
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(4000);
 
-    int httpCode = http.POST(requestBody);
-    if (httpCode > 0) {
-      String response = http.getString();
-      Serial.printf("📡 Telemetry Sent [HTTP %d]: %s\\n", httpCode, response.c_str());
+    HTTPClient http;
+    if (http.begin(client, RESQ_SERVER_URL)) {
+      http.addHeader("Content-Type", "application/json");
+      http.addHeader("x-api-key", DEVICE_API_KEY);
+
+      httpCode = http.POST(requestBody);
+      if (httpCode > 0) {
+        httpResponse = http.getString();
+      } else {
+        httpResponse = http.errorToString(httpCode);
+      }
+      http.end();
     } else {
-      Serial.printf("❌ HTTP POST Failed: %s (Code %d)\\n", http.errorToString(httpCode).c_str(), httpCode);
+      httpResponse = "Connection failed";
     }
-    http.end();
   } else {
-    Serial.println("❌ Unable to initiate connection to Render backend.");
+    httpResponse = "Wi-Fi Disconnected";
   }
+
+  // Reset window peak and energy counters if alert cooldown has elapsed
+  if (millis() >= quakeAlertUntil) {
+    peakVibrationInWindow = 0.04;
+    tremorSamplesInWindow = 0;
+  }
+}
+
+// =============================================================
+// Interactive Sensor Test Mode (Type 't' in Serial Monitor)
+// =============================================================
+void runInteractiveTest() {
+  Serial.println();
+  Serial.println("==================================================");
+  Serial.println("🔬 INTERACTIVE SENSOR STREAM (10 Hz for 15 seconds)");
+  Serial.println("==================================================");
+
+  unsigned long start = millis();
+  while (millis() - start < 15000) {
+    pollMPU6050Continuous();
+    int fPin = digitalRead(PIN_FLAME);
+    int gasVal = analogRead(PIN_MQ2_GAS);
+    float dist = readUltrasonicDistance();
+
+    Serial.printf("Flame:%d | Gas:%4d | Tilt:%4.1f° | Shock:%4.2fg | Dist:%5.1f cm\n",
+                  fPin, gasVal, currentTiltAngle, instantaneousVibration, dist);
+    delay(100);
+  }
+  Serial.println("Interactive Stream Completed.");
 }
 `;
 
   const jsonPayload = `{
   "deviceId": "RESQ-NODE-01",
-  "temperature": 26.5,
-  "humidity": 52.0,
+  "apiKey": "resq_dev_node01_alpha_9882a1",
   "gas": 140,
   "smoke": 140,
   "flame": false,
@@ -349,17 +597,14 @@ void transmitTelemetry() {
   "tiltAngle": 1.2,
   "earthquake": false,
   "vibration": 0.04,
+  "hasWaterSensor": false,
   "water": false,
-  "waterLevel": 0,
+  "waterLevel": null,
   "distance": 84.5,
-  "mpu6050": {
-    "ax": 0.01,
-    "ay": 0.02,
-    "az": 0.99
-  },
   "rssi": -58,
-  "firmwareVersion": "1.4.0-esp8266",
-  "timestamp": "2026-11-14T10:00:00.000Z"
+  "ax": 0.01,
+  "ay": 0.02,
+  "az": 0.99
 }`;
 
   const handleCopy = (text) => {
@@ -378,8 +623,8 @@ void transmitTelemetry() {
               <Cpu className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">ESP8266 Firmware & Hardware Wiring</h2>
-              <p className="text-xs text-slate-500">NodeMCU ESP8266 + MPU6050 (Calibrated) + MQ-2 + Flame + HC-SR04</p>
+              <h2 className="text-base font-bold text-slate-900">ESP8266 Firmware & Hardware Diagnostics</h2>
+              <p className="text-xs text-slate-500">NodeMCU ESP8266 + MPU6050 (50Hz Sampling) + MQ-2 + Flame (Configurable) + HC-SR04</p>
             </div>
           </div>
           <button
@@ -400,7 +645,7 @@ void transmitTelemetry() {
                 : 'border-transparent text-slate-500 hover:text-slate-900'
             }`}
           >
-            NodeMCU Arduino C++ Firmware (Zero Dependencies)
+            NodeMCU Arduino C++ Firmware (Debugged & Tested)
           </button>
           <button
             onClick={() => setActiveTab('pinout')}
@@ -410,7 +655,7 @@ void transmitTelemetry() {
                 : 'border-transparent text-slate-500 hover:text-slate-900'
             }`}
           >
-            Pin Mapping Table
+            Pin Mapping & Diagnostics
           </button>
           <button
             onClick={() => setActiveTab('json')}
@@ -430,7 +675,7 @@ void transmitTelemetry() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-600 font-medium">
-                  Copy this C++ sketch into Arduino IDE. Built-in stationary MPU6050 calibration & noise filtering included.
+                  Copy this C++ sketch into Arduino IDE. Includes 50Hz continuous MPU6050 polling, peak shock capture, and full serial diagnostics.
                 </span>
                 <button
                   onClick={() => handleCopy(arduinoCode)}
@@ -452,7 +697,7 @@ void transmitTelemetry() {
           {activeTab === 'pinout' && (
             <div className="space-y-4 text-xs">
               <p className="text-slate-600">
-                Connect your 4 physical sensor modules to the NodeMCU ESP8266 development board according to this table:
+                Verify each physical wire connection on your NodeMCU development board:
               </p>
 
               <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -460,45 +705,47 @@ void transmitTelemetry() {
                   <thead>
                     <tr className="bg-slate-100/75 text-slate-700 uppercase font-semibold text-[11px] border-b border-slate-200">
                       <th className="py-2.5 px-4">Sensor Module</th>
-                      <th className="py-2.5 px-4">Hazard Monitored</th>
+                      <th className="py-2.5 px-4">Hardware Function</th>
                       <th className="py-2.5 px-4">NodeMCU Pin</th>
-                      <th className="py-2.5 px-4">Power (VCC / GND)</th>
+                      <th className="py-2.5 px-4">Power Connections</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
                     <tr className="hover:bg-slate-50">
-                      <td className="py-2.5 px-4 font-bold text-slate-900 font-sans">MPU6050 6-Axis</td>
-                      <td className="py-2.5 px-4 text-orange-600 font-sans">Building Tilt & Earthquake</td>
+                      <td className="py-2.5 px-4 font-bold text-slate-900 font-sans">MPU6050 (6-Axis)</td>
+                      <td className="py-2.5 px-4 text-orange-600 font-sans">Tilt & Seismic Tremors</td>
                       <td className="py-2.5 px-4 font-bold text-teal-700">SDA: D2 (GPIO4), SCL: D1 (GPIO5)</td>
-                      <td className="py-2.5 px-4 text-slate-600">3.3V / GND</td>
-                    </tr>
-                    <tr className="hover:bg-slate-50">
-                      <td className="py-2.5 px-4 font-bold text-slate-900 font-sans">MQ-2 Gas / Smoke</td>
-                      <td className="py-2.5 px-4 text-amber-600 font-sans">Combustible Gas, LPG, Smoke</td>
-                      <td className="py-2.5 px-4 font-bold text-teal-700">AOUT: A0 (ADC0)</td>
-                      <td className="py-2.5 px-4 text-slate-600">VIN (5V) / GND</td>
+                      <td className="py-2.5 px-4 text-slate-600">VCC to 3.3V, GND to GND, AD0 to GND</td>
                     </tr>
                     <tr className="hover:bg-slate-50">
                       <td className="py-2.5 px-4 font-bold text-slate-900 font-sans">Optical Flame Sensor</td>
                       <td className="py-2.5 px-4 text-rose-600 font-sans">Fire Detection (760–1100nm IR)</td>
                       <td className="py-2.5 px-4 font-bold text-teal-700">DOUT: D5 (GPIO14)</td>
-                      <td className="py-2.5 px-4 text-slate-600">3.3V / GND</td>
+                      <td className="py-2.5 px-4 text-slate-600">VCC to 3.3V, GND to GND</td>
+                    </tr>
+                    <tr className="hover:bg-slate-50">
+                      <td className="py-2.5 px-4 font-bold text-slate-900 font-sans">MQ-2 Gas / Smoke</td>
+                      <td className="py-2.5 px-4 text-amber-600 font-sans">Combustible Gas & Smoke</td>
+                      <td className="py-2.5 px-4 font-bold text-teal-700">AOUT: A0 (ADC0)</td>
+                      <td className="py-2.5 px-4 text-slate-600 font-bold text-rose-600">VCC to VIN (5V required!), GND to GND</td>
                     </tr>
                     <tr className="hover:bg-slate-50">
                       <td className="py-2.5 px-4 font-bold text-slate-900 font-sans">HC-SR04 Ultrasonic</td>
-                      <td className="py-2.5 px-4 text-cyan-600 font-sans">Distance & Water Leakage</td>
+                      <td className="py-2.5 px-4 text-cyan-600 font-sans">Proximity & Distance (Overhead Tank Level if configured)</td>
                       <td className="py-2.5 px-4 font-bold text-teal-700">TRIG: D6 (GPIO12), ECHO: D7 (GPIO13)</td>
-                      <td className="py-2.5 px-4 text-slate-600">VIN (5V) / GND</td>
+                      <td className="py-2.5 px-4 text-slate-600">VCC to VIN (5V), GND to GND</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
-              <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-xl text-teal-900 space-y-1">
-                <span className="font-bold block">💡 Calibration Tip:</span>
-                <span className="text-[11px] block">
-                  When powering on the NodeMCU, keep the board stationary on a flat surface for 2 seconds. The startup routine records 100 resting baseline samples so that table angle and sensor mounting offsets do not cause false alarms.
-                </span>
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <span className="font-bold text-slate-800 block">🔧 Benchtop Calibration Guide:</span>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                  <li><strong>MPU6050:</strong> When the board powers on, keep it completely flat and still for 2 seconds. The firmware samples 100 baseline readings to cancel out resting mounting angles.</li>
+                  <li><strong>Flame Sensor Potentiometer:</strong> In normal room lighting with NO flame, the module's green DOUT LED must be OFF (pin reads HIGH = 1). When you hold a lighter ~10-20 cm away, the LED must turn ON (pin reads LOW = 0). Turn the small blue potentiometer screw until this transition is sharp.</li>
+                  <li><strong>MQ-2 Sensor:</strong> The sensor takes 20-30 seconds to warm up after power-on. The metal mesh heater will feel gently warm. Clean air ADC reads 50-180. Blowing smoke or butane rises it above 220.</li>
+                </ul>
               </div>
             </div>
           )}

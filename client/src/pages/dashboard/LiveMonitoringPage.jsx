@@ -105,8 +105,12 @@ const LiveMonitoringPage = () => {
   const tilt = Boolean(activeReading.tilt);
   const earthquake = Boolean(activeReading.earthquake);
   const vibration = activeReading.vibration !== undefined && activeReading.vibration !== null ? activeReading.vibration : 0.04;
-  const water = Boolean(activeReading.water);
-  const waterLevel = activeReading.waterLevel !== undefined && activeReading.waterLevel !== null ? activeReading.waterLevel : 0;
+  const hasWaterSensor = Boolean(
+    activeReading.hasWaterSensor === true ||
+    (activeReading.isSimulated && (activeReading.water === true || (activeReading.waterLevel && activeReading.waterLevel > 0)))
+  );
+  const water = Boolean(hasWaterSensor && activeReading.water);
+  const waterLevel = hasWaterSensor && activeReading.waterLevel !== undefined && activeReading.waterLevel !== null ? activeReading.waterLevel : null;
 
   const isTempCritical = temp > 50;
   const isTempWarning = temp > 36;
@@ -114,7 +118,7 @@ const LiveMonitoringPage = () => {
   const isGasWarning = gas > 180 || smoke > 180;
   const isFlameCritical = flame === true;
   const isTiltCritical = tilt || earthquake || vibration > 1.5;
-  const isWaterCritical = water || waterLevel > 40;
+  const isWaterCritical = Boolean(hasWaterSensor && (water || (waterLevel !== null && waterLevel > 40)));
 
   if (loading) {
     return (
@@ -362,10 +366,10 @@ const LiveMonitoringPage = () => {
           }`}
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-600">Water Leak / Flood Sensor</span>
+            <span className="text-xs font-semibold text-slate-600">Water Leak / Moisture Probe</span>
             <div
               className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                isWaterCritical ? 'bg-cyan-600 text-white animate-bounce' : 'bg-cyan-50 text-cyan-600'
+                isWaterCritical ? 'bg-cyan-600 text-white animate-bounce' : 'bg-slate-100 text-slate-400'
               }`}
             >
               <Droplets className="w-4 h-4" />
@@ -373,20 +377,20 @@ const LiveMonitoringPage = () => {
           </div>
 
           <div className="text-2xl font-extrabold font-mono text-slate-900 tracking-tight">
-            {water ? 'LEAK DETECTED' : 'DRY & SAFE'}
+            {hasWaterSensor ? (water ? 'LEAK DETECTED' : 'DRY & SAFE') : 'NOT CONNECTED'}
           </div>
 
           <div className="mt-2 text-xs space-y-1">
             <div className="flex items-center justify-between text-slate-500">
               <span>Probe Moisture:</span>
-              <span className="font-mono font-medium">{waterLevel > 0 ? `${waterLevel}%` : '0%'}</span>
+              <span className="font-mono font-medium">{hasWaterSensor && waterLevel !== null ? `${waterLevel}%` : 'N/A'}</span>
             </div>
             <div
               className={`font-bold text-[11px] ${
-                isWaterCritical ? 'text-cyan-800' : 'text-emerald-700'
+                isWaterCritical ? 'text-cyan-800' : 'text-slate-500'
               }`}
             >
-              {isWaterCritical ? 'WATER CONTACT ON PROBE' : 'Floor surface dry'}
+              {hasWaterSensor ? (isWaterCritical ? 'WATER CONTACT ON PROBE' : 'Floor surface dry') : 'Water sensor not installed'}
             </div>
           </div>
         </div>
