@@ -25,8 +25,12 @@ const verifyDeviceApiKey = async (req, res, next) => {
 
   const deviceId = (rawDeviceId || 'RESQ-NODE-01').toUpperCase();
 
+  // Safe diagnostic log (never logs secret keys)
+  console.log(`[AUTH DIAGNOSTIC] Incoming request to ${req.method} ${req.originalUrl || req.path} from deviceId: ${deviceId}`);
+
   // Strict check: API key MUST be provided
   if (!apiKey) {
+    console.warn(`[AUTH DIAGNOSTIC] ❌ Auth rejected for deviceId: ${deviceId} - Missing device API key in x-api-key HTTP header`);
     return res.status(401).json({
       success: false,
       message: 'Unauthorized: Missing device API key in x-api-key HTTP header',
@@ -88,12 +92,14 @@ const verifyDeviceApiKey = async (req, res, next) => {
       (!envApiKey && apiKey === 'resq_iot_secure_key_2026');
 
     if (!isAuthorized) {
+      console.warn(`[AUTH DIAGNOSTIC] ❌ Auth rejected for deviceId: ${deviceId} - Invalid API key`);
       return res.status(401).json({
         success: false,
         message: 'Unauthorized: Invalid device API key',
       });
     }
 
+    console.log(`[AUTH DIAGNOSTIC] ✅ Auth approved for deviceId: ${deviceId}`);
     req.device = device;
     next();
   } catch (error) {

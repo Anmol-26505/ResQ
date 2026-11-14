@@ -133,6 +133,8 @@ bool isSustainedTilt = false;
 // Alert Latches
 unsigned long tiltAlertUntil = 0;
 unsigned long quakeAlertUntil = 0;
+unsigned long fireAlertUntil = 0;
+unsigned long gasAlertUntil = 0;
 
 // Forward Function Prototypes
 void setup();
@@ -215,9 +217,19 @@ void loop() {
 
   // Read instantaneous sensor states
   int flamePinRaw = digitalRead(PIN_FLAME);
-  bool fireDetected = FLAME_ACTIVE_LOW ? (flamePinRaw == LOW) : (flamePinRaw == HIGH);
+  bool fireInstant = FLAME_ACTIVE_LOW ? (flamePinRaw == LOW) : (flamePinRaw == HIGH);
+  if (fireInstant) {
+    fireAlertUntil = millis() + HAZARD_LATCH_MS;
+  }
+  bool fireDetected = fireInstant || (millis() < fireAlertUntil);
+
   int gasRaw = analogRead(PIN_MQ2_GAS);
-  bool gasDetected = (gasRaw >= GAS_HAZARD_THRESHOLD);
+  bool gasInstant = (gasRaw >= GAS_HAZARD_THRESHOLD);
+  if (gasInstant) {
+    gasAlertUntil = millis() + HAZARD_LATCH_MS;
+  }
+  bool gasDetected = gasInstant || (millis() < gasAlertUntil);
+
   float distCm = readUltrasonicDistance();
 
   bool isTilt = (millis() < tiltAlertUntil) || isSustainedTilt;
@@ -244,7 +256,16 @@ void loop() {
     }
   }
 
-  // 4. Regular 2-second Telemetry Transmission to Render
+  // 4. Immediate transmission on newly triggered hazard (within 500ms edge detection)
+  static bool wasHazardActive = false;
+  bool isAnyHazard = fireDetected || gasDetected || isTilt || isQuake;
+  if (isAnyHazard && !wasHazardActive && (now - lastSendTime >= 500)) {
+    lastSendTime = now;
+    transmitTelemetry();
+  }
+  wasHazardActive = isAnyHazard;
+
+  // 5. Regular 2-second Telemetry Transmission to Render
   if (now - lastSendTime >= SEND_INTERVAL_MS) {
     lastSendTime = now;
     transmitTelemetry();
@@ -492,8 +513,13 @@ float readUltrasonicDistance() {
 // =============================================================
 void transmitTelemetry() {
   int gasRaw = analogRead(PIN_MQ2_GAS);
+  bool gasInstant = (gasRaw >= GAS_HAZARD_THRESHOLD);
+  bool gasDetected = gasInstant || (millis() < gasAlertUntil);
+
   int flamePinRaw = digitalRead(PIN_FLAME);
-  bool fireDetected = FLAME_ACTIVE_LOW ? (flamePinRaw == LOW) : (flamePinRaw == HIGH);
+  bool fireInstant = FLAME_ACTIVE_LOW ? (flamePinRaw == LOW) : (flamePinRaw == HIGH);
+  bool fireDetected = fireInstant || (millis() < fireAlertUntil);
+
   float distanceCm = readUltrasonicDistance();
 
   bool isTilt = (millis() < tiltAlertUntil) || isSustainedTilt;
@@ -535,7 +561,8 @@ void transmitTelemetry() {
   if (WiFi.status() == WL_CONNECTED) {
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(4000);
+    client.setBufferSizes(1024, 512); // Conserve heap and avoid TLS allocation failure
+    client.setTimeout(10000);         // 10-second timeout for Cloudflare + Render SSL roundtrip
 
     HTTPClient http;
     if (http.begin(client, RESQ_SERVER_URL)) {
@@ -550,11 +577,29 @@ void transmitTelemetry() {
       }
       http.end();
     } else {
-      httpResponse = "Connection failed";
+      httpResponse = "HTTPClient begin failed";
     }
   } else {
     httpResponse = "Wi-Fi Disconnected";
   }
+
+  // Clear Serial Monitor Diagnostics
+  Serial.println();
+  Serial.println("[RESQ DEBUG]");
+  Serial.printf("FIRE DETECTED:       %s\n", fireDetected ? "true" : "false");
+  Serial.printf("GAS DETECTED:        %s\n", gasDetected ? "true" : "false");
+  Serial.printf("TILT DETECTED:       %s\n", isTilt ? "true" : "false");
+  Serial.printf("EARTHQUAKE DETECTED: %s\n", isQuake ? "true" : "false");
+  Serial.printf("WATER DETECTED:      %s\n", isWater ? "true" : "false");
+  Serial.println();
+  Serial.println("[HTTP DEBUG]");
+  Serial.print("Request URL:        "); Serial.println(RESQ_SERVER_URL);
+  String safePayload = requestBody;
+  safePayload.replace(DEVICE_API_KEY, "***REDACTED***");
+  Serial.print("Payload:            "); Serial.println(safePayload);
+  Serial.printf("HTTP RESPONSE CODE: %d\n", httpCode);
+  Serial.print("Backend Response:   "); Serial.println(httpResponse);
+  Serial.println("----------------------------------------------------");
 
   // Reset window peak and energy counters if alert cooldown has elapsed
   if (millis() >= quakeAlertUntil) {

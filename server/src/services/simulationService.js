@@ -26,6 +26,13 @@ const runSimulationTick = async () => {
     simulationTickCount++;
 
     for (const device of devices) {
+      // Protect live physical hardware devices from being overwritten by simulated nominal ticks
+      const isPhysicalNode = device.deviceType === 'NodeMCU ESP8266' || device.deviceId === 'RESQ-NODE-01';
+      const hasRecentLiveTelemetry = device.lastSeenAt && !device.latestReading?.isSimulated && (Date.now() - new Date(device.lastSeenAt).getTime()) < 600000;
+      if (isPhysicalNode && (hasRecentLiveTelemetry || currentScenario === 'nominal')) {
+        continue; // Never overwrite real hardware with fake simulated baseline
+      }
+
       if (!deviceStates[device.deviceId]) {
         deviceStates[device.deviceId] = {
           temp: 22 + (Math.random() * 5),

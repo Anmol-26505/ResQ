@@ -113,14 +113,15 @@ const HomePage = () => {
   useEffect(() => {
     const pollInterval = setInterval(async () => {
       try {
+        const devParam = selectedDeviceId ? `?deviceId=${selectedDeviceId}` : '?deviceId=RESQ-NODE-01';
         const [sensorRes, alertsRes] = await Promise.all([
-          api.get('/sensors/latest'),
+          api.get(`/sensors/latest${devParam}`),
           api.get('/alerts?status=active&limit=10'),
         ]);
 
         if (sensorRes.data?.success) {
           const freshReading = sensorRes.data.latestReading || sensorRes.data.reading;
-          if (freshReading) {
+          if (freshReading && (!selectedDeviceId || freshReading.deviceId === selectedDeviceId)) {
             setTelemetryHistory((prev) => {
               if (prev.length === 0 || !prev[0]?.timestamp) {
                 return [freshReading];

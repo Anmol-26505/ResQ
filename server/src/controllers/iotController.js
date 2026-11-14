@@ -144,6 +144,8 @@ const postReading = async (req, res, next) => {
 
     const mpuData = (ax !== null || gx !== null) ? { ax, ay, az, gx, gy, gz } : undefined;
 
+    console.log(`[INGEST DIAGNOSTIC] Telemetry received from ${deviceId}: flame=${flame}, gas=${gas}, smoke=${smoke}, tilt=${tilt} (${tiltAngle}°), quake=${earthquake} (${vibration}g), dist=${distance}cm, water=${water}`);
+
     // Persist sensor reading
     const reading = await SensorReading.create({
       deviceId,
@@ -164,6 +166,7 @@ const postReading = async (req, res, next) => {
       mpu6050: mpuData,
       rawSensors,
       isSimulated,
+      signalRssi: payload.rssi !== undefined ? Number(payload.rssi) : -60,
       timestamp: isNaN(readingTimestamp.getTime()) ? new Date() : readingTimestamp,
     });
 
@@ -186,6 +189,7 @@ const postReading = async (req, res, next) => {
         waterLevel,
         distance,
         mpu6050: mpuData,
+        isSimulated,
         timestamp: reading.timestamp,
       };
 
@@ -195,6 +199,8 @@ const postReading = async (req, res, next) => {
       await req.device.save();
       broadcastDeviceStatus(req.device);
     }
+
+    console.log(`[INGEST DIAGNOSTIC] ✅ MongoDB save successful: readingId=${reading._id}, device=${deviceId}, status=${req.device?.status}`);
 
     // Broadcast reading to all subscribed dashboards
     broadcastSensorReading(reading);
@@ -230,6 +236,7 @@ const postReading = async (req, res, next) => {
       alerts: triggeredAlerts.map(a => ({ id: a._id, title: a.title, severity: a.severity })),
     });
   } catch (error) {
+    console.error('[INGEST DIAGNOSTIC] ❌ Error saving reading:', error.message);
     next(error);
   }
 };
@@ -287,6 +294,8 @@ const getLatestReadings = async (req, res, next) => {
   try {
     const { deviceId } = req.query;
 
+    const devices = await Device.find({}).select('deviceId name status lastSeenAt latestReading location supportedSensors');
+
     if (deviceId) {
       const devUpper = deviceId.toUpperCase();
       const [latest, device] = await Promise.all([
@@ -294,22 +303,38 @@ const getLatestReadings = async (req, res, next) => {
         Device.findOne({ deviceId: devUpper }),
       ]);
 
+      const activeReading = latest || device?.latestReading || null;
+
       return res.json({
         success: true,
         deviceId: devUpper,
         deviceStatus: device ? device.status : 'offline',
         lastSeenAt: device ? device.lastSeenAt : null,
-        reading: latest || device?.latestReading || null,
+        latestReading: activeReading,
+        reading: activeReading,
+        timestamp: activeReading?.timestamp || new Date().toISOString(),
+        devices: devices.map((d) => ({
+          deviceId: d.deviceId,
+          name: d.name,
+          status: d.status,
+          location: d.location,
+          lastSeenAt: d.lastSeenAt,
+          latestReading: d.latestReading,
+          supportedSensors: d.supportedSensors,
+        })),
+        count: devices.length,
       });
     }
 
     // Return latest readings for all known devices, plus the overall latest reading
-    const [devices, mostRecent] = await Promise.all([
-      Device.find({}).select('deviceId name status lastSeenAt latestReading location supportedSensors'),
-      SensorReading.findOne({}).sort({ timestamp: -1 }),
-    ]);
+    // Prioritize non-simulated real hardware telemetry over background simulation
+    let mostRecent = await SensorReading.findOne({ isSimulated: false }).sort({ timestamp: -1 });
+    if (!mostRecent) {
+      mostRecent = await SensorReading.findOne({}).sort({ timestamp: -1 });
+    }
 
-    const activeReading = mostRecent || devices[0]?.latestReading || null;
+    const primaryDevice = devices.find((d) => d.deviceId === 'RESQ-NODE-01') || devices[0];
+    const activeReading = mostRecent || primaryDevice?.latestReading || null;
 
     res.json({
       success: true,

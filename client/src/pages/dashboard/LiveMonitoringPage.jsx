@@ -80,11 +80,8 @@ const LiveMonitoringPage = () => {
                 status: 'online',
                 lastSeenAt: latestReading.timestamp,
                 latestReading: {
-                  temperature: latestReading.temperature,
-                  humidity: latestReading.humidity,
-                  gas: latestReading.gas,
-                  flame: latestReading.flame,
-                  timestamp: latestReading.timestamp,
+                  ...d.latestReading,
+                  ...latestReading,
                 },
               }
             : d
@@ -92,6 +89,35 @@ const LiveMonitoringPage = () => {
       );
     }
   }, [latestReading, selectedDeviceId]);
+
+  // Real-time 2-second telemetry polling fallback (works even if WebSocket is disconnected)
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const devId = selectedDeviceId || 'RESQ-NODE-01';
+        const res = await api.get(`/sensors/latest?deviceId=${devId}`);
+        if (res.data?.success) {
+          const fresh = res.data.latestReading || res.data.reading;
+          if (fresh && (!selectedDeviceId || fresh.deviceId === selectedDeviceId)) {
+            setTelemetryHistory((prev) => {
+              if (prev.length === 0 || !prev[0]?.timestamp) return [fresh];
+              const prevTime = new Date(prev[0].timestamp).getTime();
+              const freshTime = new Date(fresh.timestamp).getTime();
+              if (freshTime > prevTime) return [fresh, ...prev.slice(0, 19)];
+              return prev;
+            });
+          }
+          if (res.data.devices && res.data.devices.length > 0) {
+            setDevices(res.data.devices);
+          }
+        }
+      } catch (e) {
+        // silent
+      }
+    }, 2000);
+
+    return () => clearInterval(pollInterval);
+  }, [selectedDeviceId]);
 
   const selectedDevice = devices.find((d) => d.deviceId === selectedDeviceId) || devices[0];
   const activeReading = telemetryHistory[0] || selectedDevice?.latestReading || {};

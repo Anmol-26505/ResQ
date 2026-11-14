@@ -387,4 +387,148 @@ describe('ResQ Backend API Suite', () => {
     assert.ok(sustainedReading);
     assert.equal(sustainedReading.tilt, true, 'Sustained tilt persisting across consecutive readings confirms tilt');
   });
+
+  test('21. End-to-end Fire Hazard: flame=true is saved and retrieved via GET /api/sensors/latest', async () => {
+    await AlertRule.create({
+      name: 'Critical Fire Detection Rule',
+      deviceId: 'ALL',
+      sensorType: 'flame',
+      operator: '==',
+      thresholdValue: true,
+      severity: 'critical',
+      isEnabled: true,
+    });
+
+    const res = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        flame: true,
+        gas: 110,
+        tilt: false,
+        earthquake: false,
+      });
+
+    assert.equal(res.status, 201);
+    assert.ok(res.body.alertsTriggered >= 1, 'Fire must trigger critical alert');
+
+    const latestRes = await request(app)
+      .get(`/api/sensors/latest?deviceId=${testDeviceId}`)
+      .set('x-api-key', testApiKey);
+
+    assert.equal(latestRes.status, 200);
+    const reading = latestRes.body.latestReading || latestRes.body.reading;
+    assert.ok(reading);
+    assert.equal(reading.flame, true, 'flame must be true in latest reading');
+  });
+
+  test('22. End-to-end Gas Hazard: gas=450 triggers alert and is retrieved via GET /api/sensors/latest', async () => {
+    await AlertRule.create({
+      name: 'Toxic Gas Detection Rule',
+      deviceId: 'ALL',
+      sensorType: 'gas',
+      operator: '>',
+      thresholdValue: 200,
+      severity: 'critical',
+      isEnabled: true,
+    });
+
+    const res = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        flame: false,
+        gas: 450,
+        smoke: 450,
+        tilt: false,
+        earthquake: false,
+      });
+
+    assert.equal(res.status, 201);
+    assert.ok(res.body.alertsTriggered >= 1, 'Gas > 200 must trigger gas alert');
+
+    const latestRes = await request(app)
+      .get(`/api/sensors/latest?deviceId=${testDeviceId}`);
+
+    assert.equal(latestRes.status, 200);
+    const reading = latestRes.body.latestReading || latestRes.body.reading;
+    assert.ok(reading);
+    assert.equal(reading.gas, 450, 'gas must be 450 in latest reading');
+  });
+
+  test('23. End-to-end Tilt Hazard: tilt=true triggers alert and is retrieved via GET /api/sensors/latest', async () => {
+    await AlertRule.create({
+      name: 'Structural Tilt Rule',
+      deviceId: 'ALL',
+      sensorType: 'tilt',
+      operator: '==',
+      thresholdValue: true,
+      severity: 'critical',
+      isEnabled: true,
+    });
+
+    const res = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        flame: false,
+        gas: 100,
+        tilt: true,
+        tiltAngle: 24.5,
+        earthquake: false,
+      });
+
+    assert.equal(res.status, 201);
+    assert.ok(res.body.alertsTriggered >= 1, 'Tilt must trigger tilt alert');
+
+    const latestRes = await request(app)
+      .get(`/api/sensors/latest?deviceId=${testDeviceId}`);
+
+    assert.equal(latestRes.status, 200);
+    const reading = latestRes.body.latestReading || latestRes.body.reading;
+    assert.ok(reading);
+    assert.equal(reading.tilt, true, 'tilt must be true in latest reading');
+    assert.equal(reading.tiltAngle, 24.5, 'tiltAngle must be 24.5 in latest reading');
+  });
+
+  test('24. End-to-end Earthquake Hazard: earthquake=true triggers alert and is retrieved via GET /api/sensors/latest', async () => {
+    await Alert.deleteMany({ deviceId: testDeviceId, sensorType: 'earthquake' });
+    await AlertRule.create({
+      name: 'Earthquake Seismic Rule',
+      deviceId: 'ALL',
+      sensorType: 'earthquake',
+      operator: '==',
+      thresholdValue: true,
+      severity: 'critical',
+      cooldownMinutes: 0,
+      isEnabled: true,
+    });
+
+    const res = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        flame: false,
+        gas: 100,
+        tilt: false,
+        earthquake: true,
+        vibration: 1.85,
+      });
+
+    assert.equal(res.status, 201);
+    assert.ok(res.body.alertsTriggered >= 1, 'Earthquake must trigger earthquake alert');
+
+    const latestRes = await request(app)
+      .get(`/api/sensors/latest?deviceId=${testDeviceId}`);
+
+    assert.equal(latestRes.status, 200);
+    const reading = latestRes.body.latestReading || latestRes.body.reading;
+    assert.ok(reading);
+    assert.equal(reading.earthquake, true, 'earthquake must be true in latest reading');
+    assert.equal(reading.vibration, 1.85, 'vibration must be 1.85 in latest reading');
+  });
 });

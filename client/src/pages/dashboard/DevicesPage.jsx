@@ -73,11 +73,8 @@ const DevicesPage = () => {
                 status: 'online',
                 lastSeenAt: latestReading.timestamp,
                 latestReading: {
-                  temperature: latestReading.temperature,
-                  humidity: latestReading.humidity,
-                  gas: latestReading.gas,
-                  flame: latestReading.flame,
-                  timestamp: latestReading.timestamp,
+                  ...d.latestReading,
+                  ...latestReading,
                 },
               }
             : d
