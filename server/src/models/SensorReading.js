@@ -13,6 +13,11 @@ const sensorReadingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Device',
     },
+    seq: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
     temperature: {
       type: Number,
       default: null,

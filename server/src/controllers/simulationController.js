@@ -60,13 +60,14 @@ const setSimulationScenario = async (req, res, next) => {
 
     simulationService.setScenario(scenario);
 
-    // If clearing simulation to nominal, auto-resolve all simulated alerts
+    // If clearing simulation to nominal, auto-resolve all simulated alerts and stop simulation loop
     if (scenario === 'nominal') {
       const Alert = require('../models/Alert');
       await Alert.updateMany(
         { isSimulated: true, status: 'active' },
         { status: 'resolved', resolvedAt: new Date(), resolutionNotes: 'Simulation scenario reset to nominal/safe' }
       );
+      simulationService.stopSimulation();
     }
 
     // Trigger an immediate tick with this scenario

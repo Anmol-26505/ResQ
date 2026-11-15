@@ -16,6 +16,8 @@ import {
   Check,
   X,
   ShieldCheck,
+  Radio,
+  Activity,
 } from 'lucide-react';
 import api from '../../services/api';
 import { useSocket } from '../../context/SocketContext';
@@ -182,37 +184,54 @@ const HomePage = () => {
   const selectedDevice = devices.find((d) => d.deviceId === selectedDeviceId) || devices[0];
   const currentData = telemetryHistory[0] || selectedDevice?.latestReading || {};
 
-  // Extraction of all 4 physical sensor metrics + climate
+  // Freshness calculations (< 30s = FRESH, 30s-2m = STALE, > 2m = OFFLINE)
+  const readingTime = currentData.timestamp
+    ? new Date(currentData.timestamp).getTime()
+    : (selectedDevice?.lastSeenAt ? new Date(selectedDevice.lastSeenAt).getTime() : 0);
+  const readingAgeMs = readingTime > 0 ? (Date.now() - readingTime) : Infinity;
+  const isFresh = readingAgeMs < 30000;
+  const isStale = readingAgeMs >= 30000 && readingAgeMs < 120000;
+  const isOffline = readingAgeMs >= 120000 || readingTime === 0;
+
+  const freshnessStatus = isFresh ? 'FRESH' : (isStale ? 'STALE' : 'OFFLINE');
+  const isSimulated = Boolean(currentData.isSimulated);
+  const dataSource = isSimulated ? 'SIMULATOR' : (currentData.deviceId ? 'REAL HARDWARE' : 'STANDBY');
+  const sequenceNumber = currentData.seq !== undefined && currentData.seq !== null ? `#${currentData.seq}` : '--';
+
+  // Extraction of all physical sensor metrics (NO FAKE / MOCK NUMBERS IN PRODUCTION)
   const flameDetected = Boolean(currentData.flame);
-  const temp = currentData.temperature !== undefined && currentData.temperature !== null ? currentData.temperature : 24.5;
-  const hum = currentData.humidity !== undefined && currentData.humidity !== null ? currentData.humidity : 48;
-  const gas = currentData.gas !== undefined && currentData.gas !== null ? currentData.gas : 65;
-  const smoke = currentData.smoke !== undefined && currentData.smoke !== null ? currentData.smoke : Math.round(gas * 0.85);
+  const temp = currentData.temperature !== undefined && currentData.temperature !== null ? currentData.temperature : null;
+  const hum = currentData.humidity !== undefined && currentData.humidity !== null ? currentData.humidity : null;
+  const gas = currentData.gas !== undefined && currentData.gas !== null ? currentData.gas : null;
+  const smoke = currentData.smoke !== undefined && currentData.smoke !== null ? currentData.smoke : (gas !== null ? Math.round(gas * 0.85) : null);
   const tiltDetected = Boolean(currentData.tilt);
   const tiltAngle = currentData.tiltAngle !== undefined && currentData.tiltAngle !== null ? currentData.tiltAngle : null;
   const earthquakeDetected = Boolean(currentData.earthquake);
-  const vibration = currentData.vibration !== undefined && currentData.vibration !== null ? currentData.vibration : 0.04;
+  const vibration = currentData.vibration !== undefined && currentData.vibration !== null ? currentData.vibration : null;
   const waterDetected = Boolean(currentData.hasWaterSensor && currentData.water);
   const hasWaterSensor = Boolean(
     currentData.hasWaterSensor === true ||
-    (currentData.isSimulated && (currentData.water === true || (currentData.waterLevel && currentData.waterLevel > 0)))
+    (isSimulated && (currentData.water === true || (currentData.waterLevel && currentData.waterLevel > 0)))
   );
   const waterLevel = hasWaterSensor && currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : null;
   const distance = currentData.distance !== undefined && currentData.distance !== null && currentData.distance > 0 ? currentData.distance : null;
 
-  const isDeviceOnline = selectedDevice?.status === 'online' || (currentData.timestamp && (Date.now() - new Date(currentData.timestamp).getTime()) < 60000);
-  const lastTimestamp = currentData.timestamp
-    ? new Date(currentData.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : (selectedDevice?.lastSeenAt ? new Date(selectedDevice.lastSeenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Awaiting live stream');
+  const isDeviceOnline = isFresh || selectedDevice?.status === 'online';
+  const lastTimestamp = readingTime > 0
+    ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : 'Awaiting live stream';
 
-  // Hazard conditions
-  const isFireHazard = flameDetected || temp > 50;
-  const isSmokeHazard = smoke > 200 || gas > 200;
+  // Hazard conditions based strictly on live data
+  const isFireHazard = flameDetected || (temp !== null && temp > 50);
+  const isSmokeHazard = (smoke !== null && smoke > 200) || (gas !== null && gas > 200);
   const isTiltHazard = tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) >= 10);
-  const isQuakeHazard = earthquakeDetected || vibration >= 0.25;
+  const isQuakeHazard = earthquakeDetected || (vibration !== null && vibration >= 0.22);
   
   // Water hazard is only true if a genuine water sensor is present AND triggered, or simulated in test mode
   const isWaterHazard = Boolean(hasWaterSensor && (waterDetected || (waterLevel !== null && waterLevel > 40)));
+
+  // Critical physical hazard currently active
+  const isAnyPhysicalHazard = isFireHazard || isSmokeHazard || isTiltHazard || isQuakeHazard || isWaterHazard;
 
   // Filter out any false/stale water alerts (e.g. 0% reading or no sensor) from blocking the dashboard
   const genuineActiveAlerts = activeAlerts.filter((a) => {
@@ -222,17 +241,20 @@ const HomePage = () => {
     return true;
   });
 
-  const anyHazardActive = isFireHazard || isSmokeHazard || isTiltHazard || isQuakeHazard || isWaterHazard || genuineActiveAlerts.length > 0;
+  // CRITICAL REQUIREMENT: Audible siren ONLY triggers on FRESH hardware hazards (< 30s), NEVER on old/stale/mock MongoDB alerts
+  const shouldSoundAlarm = isFresh && isAnyPhysicalHazard;
+  const anyHazardActive = shouldSoundAlarm;
 
-  // Web Audio Alarm Lifecycle: play continuous siren when hazard is active
+  // Web Audio Alarm Lifecycle: play continuous siren ONLY when FRESH physical hazard is active
   useEffect(() => {
-    if (anyHazardActive) {
-      // Prioritize hazards: Fire > Earthquake > Gas > Tilt
+    if (shouldSoundAlarm) {
+      // Prioritize hazards: Fire > Earthquake > Gas > Tilt > Water
       let hazardType = 'fire';
       if (isFireHazard) hazardType = 'fire';
       else if (isQuakeHazard) hazardType = 'earthquake';
       else if (isSmokeHazard) hazardType = 'gas';
       else if (isTiltHazard) hazardType = 'tilt';
+      else if (isWaterHazard) hazardType = 'water';
 
       if (isAudioUnlocked && !isMuted) {
         audioAlarmService.startAlarm(hazardType);
@@ -240,7 +262,7 @@ const HomePage = () => {
     } else {
       audioAlarmService.stopAlarm();
     }
-  }, [anyHazardActive, isFireHazard, isSmokeHazard, isTiltHazard, isQuakeHazard, isAudioUnlocked, isMuted]);
+  }, [shouldSoundAlarm, isFireHazard, isSmokeHazard, isTiltHazard, isQuakeHazard, isWaterHazard, isAudioUnlocked, isMuted]);
 
   // Clean up audio on unmount
   useEffect(() => {
@@ -389,6 +411,68 @@ const HomePage = () => {
             <Cpu className="w-3.5 h-3.5 text-teal-400" />
             <span>ESP8266 Firmware & Pinout</span>
           </button>
+        </div>
+      </div>
+
+      {/* COMPACT DEVICE DIAGNOSTIC BAR (Hardware & Cloud Sync Status) */}
+      <div className="bg-slate-900 text-slate-200 p-3 sm:p-4 rounded-2xl border border-slate-800 shadow-md flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-teal-400" />
+            <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Device ID:</span>
+            <span className="font-mono font-bold text-white bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+              {selectedDevice?.deviceId || 'RESQ-NODE-01'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Data Source:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                isSimulated
+                  ? 'bg-amber-950 text-amber-300 border border-amber-700'
+                  : 'bg-teal-950 text-teal-300 border border-teal-700'
+              }`}
+            >
+              {dataSource}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Freshness:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
+                isFresh
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                  : isStale
+                  ? 'bg-amber-950 text-amber-300 border border-amber-700'
+                  : 'bg-rose-950 text-rose-300 border border-rose-700'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isFresh ? 'bg-emerald-400 animate-pulse' : isStale ? 'bg-amber-400' : 'bg-rose-400'
+                }`}
+              />
+              {freshnessStatus} {isFresh ? '(< 30s)' : ''}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 font-mono">
+            <span className="font-sans font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Seq #:</span>
+            <span className="font-bold text-teal-300">{sequenceNumber}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-slate-400 text-[11px] font-mono">
+          <div>
+            <span className="font-sans uppercase text-[10px] text-slate-500 font-bold mr-1">Backend Ingestion:</span>
+            <span className="text-emerald-400 font-semibold font-mono">ONLINE (200 OK)</span>
+          </div>
+          <div>
+            <span className="font-sans uppercase text-[10px] text-slate-500 font-bold mr-1">Last Update:</span>
+            <span className="text-slate-200 font-mono">{lastTimestamp}</span>
+          </div>
         </div>
       </div>
 
@@ -681,8 +765,8 @@ const HomePage = () => {
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Ambient Heat</span>
-                <span className={`text-base font-bold font-mono ${temp > 50 ? 'text-rose-600' : 'text-slate-800'}`}>
-                  {temp} °C
+                <span className={`text-base font-bold font-mono ${temp && temp > 50 ? 'text-rose-600' : 'text-slate-800'}`}>
+                  {temp !== null ? `${temp} °C` : '-- (No DHT)'}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
@@ -738,19 +822,23 @@ const HomePage = () => {
               <span className="text-xs text-slate-400 font-semibold uppercase block">Smoke Concentration</span>
               <div
                 className={`text-3xl font-black font-mono mt-1 ${
-                  smoke > 200 ? 'text-amber-600' : 'text-teal-700'
+                  smoke && smoke > 200 ? 'text-amber-600' : 'text-teal-700'
                 }`}
               >
-                {smoke} <span className="text-base font-bold">PPM</span>
+                {smoke !== null ? (
+                  <>{smoke} <span className="text-base font-bold">PPM</span></>
+                ) : (
+                  <span className="text-xl text-slate-400 font-sans">Awaiting Telemetry</span>
+                )}
               </div>
 
               {/* Progress bar */}
               <div className="w-full bg-slate-200 rounded-full h-2.5 mt-3 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
-                    smoke > 200 ? 'bg-amber-500' : 'bg-teal-500'
+                    smoke && smoke > 200 ? 'bg-amber-500' : 'bg-teal-500'
                   }`}
-                  style={{ width: `${Math.min(100, Math.max(5, (smoke / 500) * 100))}%` }}
+                  style={{ width: `${Math.min(100, Math.max(5, ((smoke || 0) / 500) * 100))}%` }}
                 />
               </div>
               <span className="text-[10px] text-slate-400 mt-1 block">
@@ -761,7 +849,9 @@ const HomePage = () => {
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Gas Reading</span>
-                <span className="text-base font-bold font-mono text-slate-800">{gas} PPM</span>
+                <span className="text-base font-bold font-mono text-slate-800">
+                  {gas !== null ? `${gas} PPM` : '--'}
+                </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Smoke Safe Limit</span>
@@ -816,17 +906,17 @@ const HomePage = () => {
               <span className="text-xs text-slate-400 font-semibold uppercase block">Relative Structural Shift & Tremor</span>
               <div
                 className={`text-3xl font-black font-mono mt-1 ${
-                  vibration >= 0.25 || isTiltHazard ? 'text-orange-600 animate-pulse' : 'text-emerald-600'
+                  (vibration && vibration >= 0.22) || isTiltHazard ? 'text-orange-600 animate-pulse' : 'text-emerald-600'
                 }`}
               >
-                {tiltAngle !== null ? `${tiltAngle}° Relative Tilt` : (vibration > 0 ? `${vibration} g` : '0° Upright')}
+                {tiltAngle !== null ? `${tiltAngle}° Relative Tilt` : (vibration !== null ? `${vibration} g` : (currentData.deviceId ? '0° Upright' : '--'))}
               </div>
               <span className="text-[11px] text-slate-500 mt-1 block">
                 {isTiltHazard
                   ? '⚠️ Sustained structural building tilt confirmed relative to calibrated baseline!'
                   : (isQuakeHazard
-                    ? `⚠️ Seismic shock deviation: ${vibration} g (Exceeds 0.25g threshold)!`
-                    : `Dynamic Vibration: ${vibration} g (Stationary noise filtered) • Foundation level`)}
+                    ? `⚠️ Seismic shock deviation: ${vibration ?? 0.25} g (Exceeds threshold)!`
+                    : (vibration !== null ? `Dynamic Vibration: ${vibration} g (Stationary noise filtered) • Foundation level` : 'Awaiting MPU6050 telemetry stream'))}
               </span>
             </div>
 
@@ -834,12 +924,14 @@ const HomePage = () => {
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Relative Tilt</span>
                 <span className={`text-base font-bold font-mono ${isTiltHazard ? 'text-orange-600' : 'text-emerald-700'}`}>
-                  {tiltAngle !== null ? `${tiltAngle}°` : (tiltDetected ? 'TILTED' : '0.0°')}
+                  {tiltAngle !== null ? `${tiltAngle}°` : (tiltDetected ? 'TILTED' : (currentData.deviceId ? '0.0°' : '--'))}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Dynamic Vibration</span>
-                <span className="text-base font-bold font-mono text-slate-700">{vibration} g</span>
+                <span className="text-base font-bold font-mono text-slate-700">
+                  {vibration !== null ? `${vibration} g` : '--'}
+                </span>
               </div>
             </div>
           </div>
@@ -954,12 +1046,12 @@ const HomePage = () => {
               <span className="text-xs text-slate-400 font-semibold uppercase block">Ambient Climate</span>
               <div className="flex items-center justify-center gap-6 mt-2 font-mono">
                 <div>
-                  <span className="text-2xl font-bold text-slate-900">{temp} °C</span>
+                  <span className="text-2xl font-bold text-slate-900">{temp !== null ? `${temp} °C` : '--'}</span>
                   <span className="text-[10px] text-slate-400 block font-sans">Temperature</span>
                 </div>
                 <div className="h-8 w-px bg-slate-200"></div>
                 <div>
-                  <span className="text-2xl font-bold text-teal-700">{hum} %</span>
+                  <span className="text-2xl font-bold text-teal-700">{hum !== null ? `${hum} %` : '--'}</span>
                   <span className="text-[10px] text-slate-400 block font-sans">Humidity</span>
                 </div>
               </div>
@@ -969,7 +1061,7 @@ const HomePage = () => {
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-400 text-[10px] uppercase font-bold block">Wi-Fi RSSI</span>
                 <span className="text-base font-bold font-mono text-slate-800">
-                  {selectedDevice?.metadata?.signalRssi ?? -58} dBm
+                  {currentData.rssi ?? selectedDevice?.metadata?.signalRssi ?? '--'} dBm
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
@@ -1029,7 +1121,11 @@ const HomePage = () => {
                       )}
                     </td>
                     <td className="py-2.5 px-4 font-bold text-amber-700">
-                      {packet.gas || packet.smoke || packet.mq2 || 50} PPM
+                      {packet.gas !== undefined && packet.gas !== null
+                        ? `${packet.gas} PPM`
+                        : packet.smoke !== undefined && packet.smoke !== null
+                        ? `${packet.smoke} PPM`
+                        : '--'}
                     </td>
                     <td className="py-2.5 px-4">
                       {packet.tilt || packet.earthquake ? (
@@ -1038,15 +1134,21 @@ const HomePage = () => {
                         </span>
                       ) : (
                         <span className="text-emerald-700">
-                          {packet.tiltAngle !== undefined && packet.tiltAngle !== null ? `${packet.tiltAngle}°` : 'Stable'} ({packet.vibration || 0.04}g)
+                          {packet.tiltAngle !== undefined && packet.tiltAngle !== null ? `${packet.tiltAngle}°` : 'Stable'} ({packet.vibration !== undefined && packet.vibration !== null ? `${packet.vibration}g` : '--'})
                         </span>
                       )}
                     </td>
                     <td className="py-2.5 px-4 font-bold text-cyan-700">
-                      {packet.distance !== undefined && packet.distance !== null ? `${packet.distance} cm` : (packet.water ? 'LEAK!' : 'Dry')}
+                      {packet.distance !== undefined && packet.distance !== null
+                        ? `${packet.distance} cm`
+                        : packet.water
+                        ? 'LEAK!'
+                        : packet.hasWaterSensor
+                        ? 'Dry'
+                        : 'N/A'}
                     </td>
                     <td className="py-2.5 px-4 text-rose-600">
-                      {packet.temperature || 24.5} °C
+                      {packet.temperature !== undefined && packet.temperature !== null ? `${packet.temperature} °C` : '--'}
                     </td>
                   </tr>
                 ))

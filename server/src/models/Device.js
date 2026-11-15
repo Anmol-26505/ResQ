@@ -71,6 +71,8 @@ const deviceSchema = new mongoose.Schema(
         gy: Number,
         gz: Number,
       },
+      seq: Number,
+      isSimulated: Boolean,
       timestamp: Date,
     },
     isActive: {

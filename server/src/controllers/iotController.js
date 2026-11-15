@@ -109,6 +109,7 @@ const postReading = async (req, res, next) => {
     const earthquake = Boolean(payload.earthquake || rawSensors.earthquake || isVibrationCritical);
 
     const isSimulated = Boolean(payload.isSimulated || payload.simulated || false);
+    const seq = payload.seq !== undefined && !isNaN(Number(payload.seq)) ? Number(payload.seq) : 0;
 
     // Water & Moisture Sensor:
     // Only evaluate water if a dedicated sensor is explicitly indicated or simulated scenario is running
@@ -144,12 +145,13 @@ const postReading = async (req, res, next) => {
 
     const mpuData = (ax !== null || gx !== null) ? { ax, ay, az, gx, gy, gz } : undefined;
 
-    console.log(`[INGEST DIAGNOSTIC] Telemetry received from ${deviceId}: flame=${flame}, gas=${gas}, smoke=${smoke}, tilt=${tilt} (${tiltAngle}°), quake=${earthquake} (${vibration}g), dist=${distance}cm, water=${water}`);
+    console.log(`[INGEST DIAGNOSTIC] Telemetry received from ${deviceId} (seq: ${seq}): flame=${flame}, gas=${gas}, smoke=${smoke}, tilt=${tilt} (${tiltAngle}°), quake=${earthquake} (${vibration}g), dist=${distance}cm, water=${water}`);
 
     // Persist sensor reading
     const reading = await SensorReading.create({
       deviceId,
       device: req.device ? req.device._id : null,
+      seq,
       temperature,
       humidity,
       gas,
@@ -175,6 +177,7 @@ const postReading = async (req, res, next) => {
       req.device.status = 'online';
       req.device.lastSeenAt = new Date();
       req.device.latestReading = {
+        seq,
         temperature,
         humidity,
         gas,
@@ -200,7 +203,7 @@ const postReading = async (req, res, next) => {
       broadcastDeviceStatus(req.device);
     }
 
-    console.log(`[INGEST DIAGNOSTIC] ✅ MongoDB save successful: readingId=${reading._id}, device=${deviceId}, status=${req.device?.status}`);
+    console.log(`[INGEST DIAGNOSTIC] ✅ MongoDB save successful: readingId=${reading._id}, seq=${seq}, device=${deviceId}, status=${req.device?.status}`);
 
     // Broadcast reading to all subscribed dashboards
     broadcastSensorReading(reading);
@@ -208,30 +211,33 @@ const postReading = async (req, res, next) => {
     // Evaluate Alert Rules & trigger real-time alerts if thresholds breached
     const triggeredAlerts = await processReadingAlerts(reading, req.device);
 
-    // Evaluate hazards and send Telegram emergency or recovery notifications
-    const gasOrSmoke = (smoke !== null && smoke > gas) ? smoke : (gas || 0);
-    evaluateAndNotifyHazards(
-      deviceId,
-      {
-        fire: flame || (temperature !== null && temperature > 50),
-        gas: gasOrSmoke > 200,
-        tilt,
-        earthquake,
-      },
-      {
-        gasPpm: gasOrSmoke,
-        flame,
-        tiltAngle,
-        vibration,
-        distance,
-        temperature,
-      }
-    );
+    // Only send Telegram emergency notifications for genuine non-simulated hardware telemetry
+    if (!isSimulated) {
+      const gasOrSmoke = (smoke !== null && smoke > gas) ? smoke : (gas || 0);
+      evaluateAndNotifyHazards(
+        deviceId,
+        {
+          fire: flame || (temperature !== null && temperature > 50),
+          gas: gasOrSmoke > 200,
+          tilt,
+          earthquake,
+        },
+        {
+          gasPpm: gasOrSmoke,
+          flame,
+          tiltAngle,
+          vibration,
+          distance,
+          temperature,
+        }
+      );
+    }
 
     res.status(201).json({
       success: true,
       message: 'Telemetry reading recorded successfully',
       readingId: reading._id,
+      seq,
       alertsTriggered: triggeredAlerts.length,
       alerts: triggeredAlerts.map(a => ({ id: a._id, title: a.title, severity: a.severity })),
     });

@@ -127,6 +127,13 @@ unsigned long quakeAlertUntil = 0;
 unsigned long fireAlertUntil = 0;
 unsigned long gasAlertUntil = 0;
 
+// Sequence & Network Status Tracking
+unsigned long telemetrySeq = 0;
+int lastHttpCode = 0;
+String lastHttpResponse = "None yet";
+String lastHttpRequest = "STANDBY";
+String lastBackendStatus = "DISCONNECTED";
+
 // Forward Function Prototypes
 void setup();
 void loop();
@@ -136,7 +143,7 @@ bool readMPU6050Raw(float &ax, float &ay, float &az, float &gx, float &gy, float
 void calibrateMPU6050();
 void pollMPU6050Continuous();
 float readUltrasonicDistance();
-void printStatusSummary(bool fireDetected, int gasRaw, bool isTilt, bool isQuake, bool isWater, float distCm);
+void printStatusSummary(int flamePinRaw, bool fireDetected, int gasRaw, bool gasDetected, bool isTilt, bool isQuake, float distCm);
 void transmitTelemetry();
 void runInteractiveTest();
 
@@ -234,7 +241,7 @@ void loop() {
   // 2. Serial Monitor Status Summary (Every 1 second)
   if (now - lastSummaryTime >= SERIAL_SUMMARY_INTERVAL_MS) {
     lastSummaryTime = now;
-    printStatusSummary(fireDetected, gasRaw, isTilt, isQuake, isWater, distCm);
+    printStatusSummary(flamePinRaw, fireDetected, gasRaw, gasDetected, isTilt, isQuake, distCm);
   }
 
   // 3. Check for interactive serial commands ('c' = calibrate, 't' = stream test)
@@ -264,23 +271,68 @@ void loop() {
 }
 
 // =============================================================
-// 1-Second Serial Monitor Status Summary (Clean & Readable)
+// 1-Second Serial Monitor Live Report (Clean & Standardized)
 // =============================================================
-void printStatusSummary(bool fireDetected, int gasRaw, bool isTilt, bool isQuake, bool isWater, float distCm) {
+void printStatusSummary(int flamePinRaw, bool fireDetected, int gasRaw, bool gasDetected, bool isTilt, bool isQuake, float distCm) {
+  bool distValid = (distCm > 0.0 && distCm < 450.0);
+
   Serial.println();
-  Serial.println("================ RESQ SYSTEM STATUS ================");
-  Serial.printf("WiFi:       %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
-  Serial.printf("MPU6050:    %s\n", mpuConnected ? "CONNECTED" : "NOT CONNECTED");
-  Serial.printf("FIRE:       %s\n", fireDetected ? "DETECTED" : "NORMAL");
-  Serial.printf("GAS:        %s\n", (gasRaw >= GAS_HAZARD_THRESHOLD) ? "DETECTED" : "NORMAL");
-  Serial.printf("TILT:       %s\n", isTilt ? "DETECTED" : "NORMAL");
-  Serial.printf("EARTHQUAKE: %s\n", isQuake ? "DETECTED" : "NORMAL");
-  Serial.printf("WATER:      %s\n", HC_SR04_IS_OVERHEAD_TANK_GAUGE ? (isWater ? "DETECTED" : "NORMAL") : "SENSOR NOT CONNECTED");
-  Serial.printf("TILT ANGLE: %.1f deg\n", currentTiltAngle);
-  Serial.printf("VIBRATION:  %.2f g\n", peakVibrationInWindow);
-  Serial.printf("GAS VALUE:  %d\n", gasRaw);
-  Serial.printf("DISTANCE:   %.1f cm\n", distCm);
-  Serial.println("====================================================");
+  Serial.println("========================================");
+  Serial.println("             RESQ LIVE MONITOR          ");
+  Serial.println("========================================");
+  Serial.println();
+  Serial.println("DEVICE INFORMATION");
+  Serial.printf("Device ID         : %s\n", DEVICE_ID);
+  Serial.printf("WiFi Status       : %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
+  Serial.printf("Backend Status    : %s\n", lastBackendStatus.c_str());
+  Serial.println();
+  Serial.println("FIRE SENSOR");
+  Serial.printf("Digital Value     : %s\n", (flamePinRaw == HIGH) ? "HIGH" : "LOW");
+  Serial.printf("Fire Status       : %s\n", fireDetected ? "DETECTED" : "NORMAL");
+  Serial.println();
+  Serial.println("GAS SENSOR");
+  Serial.printf("Raw ADC Value     : %d\n", gasRaw);
+  Serial.printf("Gas Threshold     : %d\n", GAS_HAZARD_THRESHOLD);
+  Serial.printf("Gas Status        : %s\n", gasDetected ? "DETECTED" : "NORMAL");
+  Serial.println();
+  Serial.println("MPU6050");
+  Serial.printf("Connection       : %s\n", mpuConnected ? "CONNECTED" : "DISCONNECTED");
+  Serial.println();
+  Serial.printf("Accelerometer X   : %.2f\n", lastRawAx);
+  Serial.printf("Accelerometer Y   : %.2f\n", lastRawAy);
+  Serial.printf("Accelerometer Z   : %.2f\n", lastRawAz);
+  Serial.println();
+  Serial.printf("Gyroscope X       : %.2f\n", lastRawGx);
+  Serial.printf("Gyroscope Y       : %.2f\n", lastRawGy);
+  Serial.printf("Gyroscope Z       : %.2f\n", lastRawGz);
+  Serial.println();
+  Serial.printf("Tilt Angle        : %.1f\n", currentTiltAngle);
+  Serial.printf("Vibration         : %.2f\n", peakVibrationInWindow);
+  Serial.println();
+  Serial.printf("Tilt Status       : %s\n", isTilt ? "DETECTED" : "NORMAL");
+  Serial.printf("Earthquake Status : %s\n", isQuake ? "DETECTED" : "NORMAL");
+  Serial.println();
+  Serial.println("ULTRASONIC SENSOR");
+  if (distValid) {
+    Serial.printf("Distance          : %.1f cm\n", distCm);
+    Serial.println("Reading Status    : VALID");
+  } else {
+    Serial.println("Distance          : TIMEOUT / NO ECHO");
+    Serial.println("Reading Status    : INVALID");
+  }
+  Serial.println();
+  Serial.println("WATER SENSOR");
+  Serial.println("Status            : NOT CONNECTED");
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("             DATA TRANSMISSION          ");
+  Serial.println("========================================");
+  Serial.println();
+  Serial.printf("HTTP Request      : %s\n", lastHttpRequest.c_str());
+  Serial.printf("HTTP Status Code  : %d\n", lastHttpCode);
+  Serial.printf("Backend Response  : %s\n", lastHttpResponse.c_str());
+  Serial.println();
+  Serial.println("========================================");
 }
 
 // =============================================================
@@ -503,6 +555,8 @@ float readUltrasonicDistance() {
 // Telemetry Transmission to Render Cloud
 // =============================================================
 void transmitTelemetry() {
+  telemetrySeq++;
+
   int gasRaw = analogRead(PIN_MQ2_GAS);
   bool gasInstant = (gasRaw >= GAS_HAZARD_THRESHOLD);
   bool gasDetected = gasInstant || (millis() < gasAlertUntil);
@@ -529,6 +583,7 @@ void transmitTelemetry() {
   // Build JSON Payload
   String requestBody = "{\"deviceId\":\"" + String(DEVICE_ID) + "\"" +
                        ",\"apiKey\":\"" + String(DEVICE_API_KEY) + "\"" +
+                       ",\"seq\":" + String(telemetrySeq) +
                        ",\"hasWaterSensor\":" + (HC_SR04_IS_OVERHEAD_TANK_GAUGE ? "true" : "false") +
                        ",\"gas\":" + String(gasRaw) +
                        ",\"smoke\":" + String(gasRaw) +
@@ -544,6 +599,9 @@ void transmitTelemetry() {
                        ",\"ax\":" + String(lastRawAx, 2) +
                        ",\"ay\":" + String(lastRawAy, 2) +
                        ",\"az\":" + String(lastRawAz, 2) +
+                       ",\"gx\":" + String(lastRawGx, 2) +
+                       ",\"gy\":" + String(lastRawGy, 2) +
+                       ",\"gz\":" + String(lastRawGz, 2) +
                        "}";
 
   int httpCode = -1;
@@ -573,6 +631,12 @@ void transmitTelemetry() {
   } else {
     httpResponse = "Wi-Fi Disconnected";
   }
+
+  // Update transmission metrics
+  lastHttpCode = httpCode;
+  lastHttpResponse = httpResponse;
+  lastHttpRequest = (httpCode == 200 || httpCode == 201) ? "SUCCESS" : "FAILED";
+  lastBackendStatus = (httpCode == 200 || httpCode == 201) ? "ONLINE (200 OK)" : (httpCode > 0 ? "HTTP " + String(httpCode) : "UNREACHABLE");
 
   // Clear Serial Monitor Diagnostics
   Serial.println();
