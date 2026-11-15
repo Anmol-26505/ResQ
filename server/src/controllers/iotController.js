@@ -377,12 +377,18 @@ const getLatestReadings = async (req, res, next) => {
       const activeReading = latest || device?.latestReading || null;
 
       if (!activeReading) {
+        const nowMsNR = Date.now();
+        const lsNR = device?.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+        const secsNR = lsNR > 0 ? Math.floor((nowMsNR - lsNR) / 1000) : null;
+        const statusNR = secsNR === null ? 'unknown' : (secsNR < 30 ? 'online' : 'offline');
         return res.json({
           success: true,
           message: 'No sensor readings found in database',
           deviceId: devUpper,
-          deviceStatus: device ? device.status : 'offline',
+          deviceStatus: statusNR,
           lastSeenAt: device ? device.lastSeenAt : null,
+          secondsSinceLastSeen: secsNR,
+          isOnline: statusNR === 'online',
           latestReading: null,
           reading: null,
           sequenceNumber: 0,
@@ -390,24 +396,46 @@ const getLatestReadings = async (req, res, next) => {
           databaseSaved: false,
           lastSavedAt: null,
           timestamp: null,
-          devices: devices.map((d) => ({
-            deviceId: d.deviceId,
-            name: d.name,
-            status: d.status,
-            location: d.location,
-            lastSeenAt: d.lastSeenAt,
-            latestReading: d.latestReading,
-            supportedSensors: d.supportedSensors,
-          })),
+          devices: devices.map((d) => {
+            const dLsMs = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
+            const dSecs = dLsMs > 0 ? Math.floor((nowMsNR - dLsMs) / 1000) : null;
+            const dStat = dSecs === null ? 'unknown' : (dSecs < 30 ? 'online' : 'offline');
+            return {
+              deviceId: d.deviceId,
+              name: d.name,
+              status: dStat,
+              location: d.location,
+              lastSeenAt: d.lastSeenAt,
+              secondsSinceLastSeen: dSecs,
+              isOnline: dStat === 'online',
+              latestReading: d.latestReading,
+              supportedSensors: d.supportedSensors,
+            };
+          }),
           count: devices.length,
         });
+      }
+
+      // Compute live device status from lastSeenAt freshness (do NOT trust stale DB status field)
+      const nowMs = Date.now();
+      const lastSeenMs = device?.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+      const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
+      let liveDeviceStatus = 'unknown';
+      if (secondsSinceLastSeen === null) {
+        liveDeviceStatus = 'unknown';
+      } else if (secondsSinceLastSeen < 30) {
+        liveDeviceStatus = 'online';
+      } else {
+        liveDeviceStatus = 'offline';
       }
 
       return res.json({
         success: true,
         deviceId: devUpper,
-        deviceStatus: device ? device.status : 'offline',
+        deviceStatus: liveDeviceStatus,
         lastSeenAt: device ? device.lastSeenAt : null,
+        secondsSinceLastSeen,
+        isOnline: liveDeviceStatus === 'online',
         latestReading: activeReading,
         reading: activeReading,
         sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
@@ -415,15 +443,22 @@ const getLatestReadings = async (req, res, next) => {
         databaseSaved: true,
         lastSavedAt: activeReading?.createdAt || activeReading?.timestamp || null,
         timestamp: activeReading?.timestamp || new Date().toISOString(),
-        devices: devices.map((d) => ({
-          deviceId: d.deviceId,
-          name: d.name,
-          status: d.status,
-          location: d.location,
-          lastSeenAt: d.lastSeenAt,
-          latestReading: d.latestReading,
-          supportedSensors: d.supportedSensors,
-        })),
+        devices: devices.map((d) => {
+          const dLastSeenMs = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
+          const dSecsSince = dLastSeenMs > 0 ? Math.floor((nowMs - dLastSeenMs) / 1000) : null;
+          const dLiveStatus = dSecsSince === null ? 'unknown' : (dSecsSince < 30 ? 'online' : 'offline');
+          return {
+            deviceId: d.deviceId,
+            name: d.name,
+            status: dLiveStatus,
+            location: d.location,
+            lastSeenAt: d.lastSeenAt,
+            secondsSinceLastSeen: dSecsSince,
+            isOnline: dLiveStatus === 'online',
+            latestReading: d.latestReading,
+            supportedSensors: d.supportedSensors,
+          };
+        }),
         count: devices.length,
       });
     }
@@ -438,6 +473,9 @@ const getLatestReadings = async (req, res, next) => {
     const primaryDevice = devices.find((d) => d.deviceId === 'RESQ-NODE-01') || devices[0];
     const activeReading = mostRecent || primaryDevice?.latestReading || null;
 
+    // Compute live status for all devices from lastSeenAt freshness
+    const nowMsAll = Date.now();
+
     res.json({
       success: true,
       count: devices.length,
@@ -448,15 +486,22 @@ const getLatestReadings = async (req, res, next) => {
       databaseSaved: Boolean(activeReading),
       lastSavedAt: activeReading?.createdAt || activeReading?.timestamp || null,
       timestamp: activeReading?.timestamp || new Date().toISOString(),
-      devices: devices.map((d) => ({
-        deviceId: d.deviceId,
-        name: d.name,
-        status: d.status,
-        location: d.location,
-        lastSeenAt: d.lastSeenAt,
-        latestReading: d.latestReading,
-        supportedSensors: d.supportedSensors,
-      })),
+      devices: devices.map((d) => {
+        const dLsMs = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
+        const dSecs = dLsMs > 0 ? Math.floor((nowMsAll - dLsMs) / 1000) : null;
+        const dStat = dSecs === null ? 'unknown' : (dSecs < 30 ? 'online' : 'offline');
+        return {
+          deviceId: d.deviceId,
+          name: d.name,
+          status: dStat,
+          location: d.location,
+          lastSeenAt: d.lastSeenAt,
+          secondsSinceLastSeen: dSecs,
+          isOnline: dStat === 'online',
+          latestReading: d.latestReading,
+          supportedSensors: d.supportedSensors,
+        };
+      }),
     });
   } catch (error) {
     next(error);

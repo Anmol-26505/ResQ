@@ -42,6 +42,8 @@ const HomePage = () => {
   // Diagnostic State (Part 8)
   const [backendStatus, setBackendStatus] = useState('CHECKING...');
   const [lastSavedTimestamp, setLastSavedTimestamp] = useState(null);
+  // Live device connection state derived from API secondsSinceLastSeen (not stale DB status field)
+  const [deviceApiOnline, setDeviceApiOnline] = useState(null); // null = unknown, true = online, false = offline
 
   const { latestReading, isConnected, recentAlerts } = useSocket();
 
@@ -87,6 +89,8 @@ const HomePage = () => {
     if (latestReading) {
       if (!selectedDeviceId || latestReading.deviceId === selectedDeviceId) {
         setTelemetryHistory((prev) => [latestReading, ...prev.slice(0, 14)]);
+        // A socket reading means the device just sent data — mark as online
+        setDeviceApiOnline(true);
       }
 
       setDevices((prev) =>
@@ -95,6 +99,7 @@ const HomePage = () => {
             ? {
                 ...d,
                 status: 'online',
+                isOnline: true,
                 lastSeenAt: latestReading.timestamp,
                 latestReading: {
                   ...d.latestReading,
@@ -130,6 +135,16 @@ const HomePage = () => {
           if (sensorRes.data.lastSavedAt) {
             setLastSavedTimestamp(sensorRes.data.lastSavedAt);
           }
+
+          // Use backend-computed isOnline / secondsSinceLastSeen (never trust stale DB status field)
+          if (sensorRes.data.isOnline !== undefined) {
+            setDeviceApiOnline(Boolean(sensorRes.data.isOnline));
+          } else if (sensorRes.data.deviceStatus === 'online') {
+            setDeviceApiOnline(true);
+          } else if (sensorRes.data.deviceStatus === 'offline') {
+            setDeviceApiOnline(false);
+          }
+
           const freshReading = sensorRes.data.latestReading || sensorRes.data.reading;
           if (freshReading && (!selectedDeviceId || freshReading.deviceId === selectedDeviceId)) {
             setTelemetryHistory((prev) => {
@@ -153,6 +168,7 @@ const HomePage = () => {
           }
         } else {
           setBackendStatus('DATABASE ERROR');
+          setDeviceApiOnline(false);
         }
 
         if (alertsRes.data?.success) {
@@ -164,6 +180,7 @@ const HomePage = () => {
         } else {
           setBackendStatus('OFFLINE');
         }
+        setDeviceApiOnline(false);
       }
     }, 2000);
 
@@ -254,7 +271,9 @@ const HomePage = () => {
   const waterLevel = hasWaterSensor && currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : null;
   const distance = currentData.distance !== undefined && currentData.distance !== null && currentData.distance > 0 ? currentData.distance : null;
 
-  const isDeviceOnline = isFresh || selectedDevice?.status === 'online';
+  // isDeviceOnline: use backend-computed live status (secondsSinceLastSeen < 30)
+  // NEVER use stale DB status field — it stays 'online' even after hours of silence
+  const isDeviceOnline = deviceApiOnline === true || isFresh;
   const lastTimestamp = readingTime > 0
     ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : 'Awaiting live stream';

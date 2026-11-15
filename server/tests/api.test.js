@@ -582,5 +582,26 @@ describe('ResQ Backend API Suite', () => {
     assert.ok(res.body.sequenceNumber >= 999);
     assert.ok(res.body.latestReading);
     assert.ok(res.body.lastSavedAt);
+    // Live status must be a computed field, not stale DB value
+    assert.ok(['online', 'offline', 'unknown'].includes(res.body.deviceStatus), 'deviceStatus must be online/offline/unknown');
+    assert.ok(res.body.secondsSinceLastSeen !== undefined, 'secondsSinceLastSeen must be present');
+    assert.ok(typeof res.body.isOnline === 'boolean', 'isOnline must be boolean');
+    // Device just posted data, so it should be online
+    assert.equal(res.body.isOnline, true, 'Device should be online after recent POST');
+    assert.equal(res.body.deviceStatus, 'online', 'deviceStatus should be online after recent POST');
+  });
+
+  test('27. GET /api/devices/:id/status returns live device heartbeat status', async () => {
+    const res = await request(app)
+      .get(`/api/devices/${testDeviceId}/status`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.deviceId, testDeviceId);
+    assert.ok(['online', 'offline', 'unknown'].includes(res.body.status), 'status must be online/offline/unknown');
+    assert.ok(typeof res.body.isOnline === 'boolean', 'isOnline must be boolean');
+    assert.ok(res.body.secondsSinceLastSeen !== undefined, 'secondsSinceLastSeen must be present');
+    // Device just posted data in test 25, so it should be online (lastSeenAt < 30s ago)
+    assert.equal(res.body.isOnline, true, 'Device should be online after recent sensor POST');
+    assert.equal(res.body.status, 'online', 'status should be online after recent POST');
   });
 });

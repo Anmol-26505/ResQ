@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   getDevices,
   getDeviceById,
+  getDeviceStatus,
   createDevice,
   updateDevice,
   regenerateApiKey,
@@ -12,6 +13,10 @@ const { protect, optionalProtect, adminOnly } = require('../middleware/authMiddl
 
 // Public read access for Home Page room/device selection
 router.get('/', optionalProtect, getDevices);
+
+// Real-time device status (online/offline/unknown) based on lastSeenAt freshness
+router.get('/:id/status', optionalProtect, getDeviceStatus);
+
 router.get('/:id', optionalProtect, getDeviceById);
 
 // Protected mutation routes

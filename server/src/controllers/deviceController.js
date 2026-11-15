@@ -217,9 +217,54 @@ const deleteDevice = async (req, res, next) => {
   }
 };
 
+// @desc    Get real-time device status (online/offline/unknown) based on lastSeenAt freshness
+// @route   GET /api/devices/:id/status
+// @access  Public (optionalProtect)
+const getDeviceStatus = async (req, res, next) => {
+  try {
+    const device = await Device.findOne({
+      $or: [{ _id: req.params.id.match(/^[0-9a-fA-F]{24}$/) ? req.params.id : null }, { deviceId: req.params.id.toUpperCase() }],
+    });
+
+    if (!device) {
+      return res.status(404).json({
+        success: false,
+        message: 'Device not found',
+      });
+    }
+
+    const nowMs = Date.now();
+    const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+    const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
+
+    let status = 'unknown';
+    if (secondsSinceLastSeen === null) {
+      status = 'unknown';
+    } else if (secondsSinceLastSeen < 30) {
+      status = 'online';
+    } else {
+      status = 'offline';
+    }
+
+    res.json({
+      success: true,
+      deviceId: device.deviceId,
+      name: device.name,
+      status,
+      isOnline: status === 'online',
+      lastSeenAt: device.lastSeenAt,
+      secondsSinceLastSeen,
+      location: device.location,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getDevices,
   getDeviceById,
+  getDeviceStatus,
   createDevice,
   updateDevice,
   regenerateApiKey,
