@@ -45,9 +45,11 @@ const char* WIFI_PASSWORD = "Sehaj@12";     // <-- Your Wi-Fi Password
 // -------------------------------------------------------------
 // 2. Render Backend Ingestion Configuration
 // -------------------------------------------------------------
-const char* RESQ_SERVER_URL = "https://resq-8tbc.onrender.com/api/sensors/update";
-const char* DEVICE_ID       = "RESQ-NODE-01";
-const char* DEVICE_API_KEY  = "resq_iot_secure_key_2026"; // Must match DEVICE_API_KEY in Render
+const char* RESQ_SERVER_URL    = "https://resq-8tbc.onrender.com/api/sensors/update";
+const char* RESQ_DASHBOARD_URL = "https://resq-8tbc.onrender.com";
+const char* RESQ_DATA_API_URL  = "https://resq-8tbc.onrender.com/api/sensors/latest";
+const char* DEVICE_ID          = "RESQ-NODE-01";
+const char* DEVICE_API_KEY     = "resq_iot_secure_key_2026"; // Must match DEVICE_API_KEY in Render
 
 // -------------------------------------------------------------
 // 3. Hardware Pin Assignments (NodeMCU ESP8266)
@@ -142,6 +144,10 @@ int lastHttpCode = 0;
 String lastHttpResponse = "None yet";
 String lastHttpRequest = "STANDBY";
 String lastBackendStatus = "DISCONNECTED";
+String lastDbStatus = "UNKNOWN";
+String lastTransmissionResult = "STANDBY";
+String transmissionState = "STANDBY";
+String lastJsonPayload = "";
 
 // Forward Function Prototypes
 void setup();
@@ -286,62 +292,92 @@ void printStatusSummary(int flamePinRaw, bool fireDetected, int gasRaw, bool gas
   bool distValid = (distCm > 0.0 && distCm < 450.0);
 
   Serial.println();
-  Serial.println("========================================");
-  Serial.println("             RESQ LIVE MONITOR          ");
-  Serial.println("========================================");
+  Serial.println("================================================");
+  Serial.println("              RESQ LIVE MONITOR                 ");
+  Serial.println("================================================");
   Serial.println();
   Serial.println("DEVICE INFORMATION");
-  Serial.printf("Device ID         : %s\n", DEVICE_ID);
-  Serial.printf("WiFi Status       : %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
-  Serial.printf("Backend Status    : %s\n", lastBackendStatus.c_str());
   Serial.println();
-  Serial.println("FIRE SENSOR");
-  Serial.printf("Digital Value     : %s\n", (flamePinRaw == HIGH) ? "HIGH" : "LOW");
-  Serial.printf("Fire Status       : %s\n", fireDetected ? "DETECTED" : "NORMAL");
+  Serial.printf("Device ID          : %s\n", DEVICE_ID);
+  Serial.printf("WiFi Status        : %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
+  Serial.printf("IP Address         : %s\n", (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString().c_str() : "0.0.0.0");
+  Serial.printf("Signal Strength    : %d dBm\n", WiFi.RSSI());
+  Serial.printf("Backend Status     : %s\n", lastBackendStatus.c_str());
   Serial.println();
-  Serial.println("GAS SENSOR");
-  Serial.printf("Raw ADC Value     : %d\n", gasRaw);
-  Serial.printf("Gas Threshold     : %d\n", GAS_HAZARD_THRESHOLD);
-  Serial.printf("Gas Status        : %s\n", gasDetected ? "DETECTED" : "NORMAL");
+  Serial.println("------------------------------------------------");
+  Serial.println("SENSOR READINGS");
+  Serial.println("------------------------------------------------");
+  Serial.println();
+  Serial.println("FLAME SENSOR");
+  Serial.printf("Digital Output     : %s\n", (flamePinRaw == HIGH) ? "HIGH" : "LOW");
+  Serial.printf("Fire Status        : %s\n", fireDetected ? "DETECTED" : "NORMAL");
+  Serial.println();
+  Serial.println("MQ-2 SENSOR");
+  Serial.printf("Raw ADC            : %d\n", gasRaw);
+  Serial.printf("Threshold          : %d\n", GAS_HAZARD_THRESHOLD);
+  Serial.printf("Gas Status         : %s\n", gasDetected ? "DETECTED" : "NORMAL");
   Serial.println();
   Serial.println("MPU6050");
-  Serial.printf("Connection       : %s\n", mpuConnected ? "CONNECTED" : "DISCONNECTED");
+  Serial.printf("Accelerometer X    : %.2f\n", lastRawAx);
+  Serial.printf("Accelerometer Y    : %.2f\n", lastRawAy);
+  Serial.printf("Accelerometer Z    : %.2f\n", lastRawAz);
   Serial.println();
-  Serial.printf("Accelerometer X   : %.2f\n", lastRawAx);
-  Serial.printf("Accelerometer Y   : %.2f\n", lastRawAy);
-  Serial.printf("Accelerometer Z   : %.2f\n", lastRawAz);
+  Serial.printf("Gyroscope X        : %.2f\n", lastRawGx);
+  Serial.printf("Gyroscope Y        : %.2f\n", lastRawGy);
+  Serial.printf("Gyroscope Z        : %.2f\n", lastRawGz);
   Serial.println();
-  Serial.printf("Gyroscope X       : %.2f\n", lastRawGx);
-  Serial.printf("Gyroscope Y       : %.2f\n", lastRawGy);
-  Serial.printf("Gyroscope Z       : %.2f\n", lastRawGz);
+  Serial.printf("Tilt Angle         : %.1f\n", currentTiltAngle);
+  Serial.printf("Vibration          : %.2f\n", peakVibrationInWindow);
   Serial.println();
-  Serial.printf("Tilt Angle        : %.1f\n", currentTiltAngle);
-  Serial.printf("Vibration         : %.2f\n", peakVibrationInWindow);
-  Serial.println();
-  Serial.printf("Tilt Status       : %s\n", isTilt ? "DETECTED" : "NORMAL");
-  Serial.printf("Earthquake Status : %s\n", isQuake ? "DETECTED" : "NORMAL");
+  Serial.printf("Tilt Status        : %s\n", isTilt ? "DETECTED" : "NORMAL");
+  Serial.printf("Earthquake Status  : %s\n", isQuake ? "DETECTED" : "NORMAL");
   Serial.println();
   Serial.println("ULTRASONIC SENSOR");
   if (distValid) {
-    Serial.printf("Distance          : %.1f cm\n", distCm);
-    Serial.println("Reading Status    : VALID");
+    Serial.printf("Distance           : %.1f cm\n", distCm);
+    Serial.println("Reading Status     : VALID");
   } else {
-    Serial.println("Distance          : TIMEOUT / NO ECHO");
-    Serial.println("Reading Status    : INVALID");
+    Serial.println("Distance           : TIMEOUT / NO ECHO");
+    Serial.println("Reading Status     : INVALID");
   }
   Serial.println();
   Serial.println("WATER SENSOR");
-  Serial.println("Status            : NOT CONNECTED");
+  Serial.println("Status             : NOT CONNECTED");
   Serial.println();
-  Serial.println("========================================");
-  Serial.println("             DATA TRANSMISSION          ");
-  Serial.println("========================================");
+  Serial.println("------------------------------------------------");
+  Serial.println("DATA TRANSMISSION");
+  Serial.println("------------------------------------------------");
   Serial.println();
-  Serial.printf("HTTP Request      : %s\n", lastHttpRequest.c_str());
-  Serial.printf("HTTP Status Code  : %d\n", lastHttpCode);
-  Serial.printf("Backend Response  : %s\n", lastHttpResponse.c_str());
+  Serial.printf("Transmission       : %s\n", transmissionState.c_str());
   Serial.println();
-  Serial.println("========================================");
+  Serial.println("POST DESTINATION:");
+  Serial.println(RESQ_SERVER_URL);
+  Serial.println();
+  Serial.println("Dashboard Address:");
+  Serial.println(RESQ_DASHBOARD_URL);
+  Serial.println();
+  Serial.println("Dashboard Data API:");
+  Serial.println(RESQ_DATA_API_URL);
+  Serial.println();
+  Serial.printf("Device Sequence    : %lu\n", telemetrySeq);
+  Serial.printf("Timestamp          : %lu ms\n", millis());
+  Serial.println();
+  Serial.println("JSON PAYLOAD:");
+  if (lastJsonPayload.length() > 0) {
+    Serial.println(lastJsonPayload);
+  } else {
+    Serial.println("[Awaiting initial telemetry sample]");
+  }
+  Serial.println();
+  Serial.printf("HTTP Status        : %d\n", lastHttpCode);
+  Serial.printf("Backend Response   : %s\n", lastHttpResponse.c_str());
+  Serial.println();
+  Serial.printf("Database Status    : %s\n", lastDbStatus.c_str());
+  Serial.println();
+  Serial.println("Transmission Result:");
+  Serial.println(lastTransmissionResult);
+  Serial.println();
+  Serial.println("================================================");
 }
 
 // =============================================================
@@ -564,6 +600,7 @@ float readUltrasonicDistance() {
 // Telemetry Transmission to Render Cloud
 // =============================================================
 void transmitTelemetry() {
+  transmissionState = "STARTED";
   telemetrySeq++;
 
   int gasRaw = analogRead(PIN_MQ2_GAS);
@@ -593,6 +630,7 @@ void transmitTelemetry() {
   String requestBody = "{\"deviceId\":\"" + String(DEVICE_ID) + "\"" +
                        ",\"apiKey\":\"" + String(DEVICE_API_KEY) + "\"" +
                        ",\"seq\":" + String(telemetrySeq) +
+                       ",\"sequenceNumber\":" + String(telemetrySeq) +
                        ",\"hasWaterSensor\":" + (HC_SR04_IS_OVERHEAD_TANK_GAUGE ? "true" : "false") +
                        ",\"gas\":" + String(gasRaw) +
                        ",\"smoke\":" + String(gasRaw) +
@@ -613,6 +651,9 @@ void transmitTelemetry() {
                        ",\"gz\":" + String(lastRawGz, 2) +
                        "}";
 
+  lastJsonPayload = requestBody;
+  lastJsonPayload.replace(DEVICE_API_KEY, "***REDACTED***");
+
   int httpCode = -1;
   String httpResponse = "";
 
@@ -620,7 +661,7 @@ void transmitTelemetry() {
     WiFiClientSecure client;
     client.setInsecure();
     client.setBufferSizes(1024, 512); // Conserve heap and avoid TLS allocation failure
-    client.setTimeout(10000);         // 10-second timeout for Cloudflare + Render SSL roundtrip
+    client.setTimeout(6000);          // 6-second timeout for Cloudflare + Render SSL roundtrip
 
     HTTPClient http;
     if (http.begin(client, RESQ_SERVER_URL)) {
@@ -641,29 +682,40 @@ void transmitTelemetry() {
     httpResponse = "Wi-Fi Disconnected";
   }
 
-  // Update transmission metrics
+  // Update transmission metrics accurately
   lastHttpCode = httpCode;
   lastHttpResponse = httpResponse;
-  lastHttpRequest = (httpCode == 200 || httpCode == 201) ? "SUCCESS" : "FAILED";
-  lastBackendStatus = (httpCode == 200 || httpCode == 201) ? "ONLINE (200 OK)" : (httpCode > 0 ? "HTTP " + String(httpCode) : "UNREACHABLE");
 
-  // Clear Serial Monitor Diagnostics
-  Serial.println();
-  Serial.println("[RESQ DEBUG]");
-  Serial.printf("FIRE DETECTED:       %s\n", fireDetected ? "true" : "false");
-  Serial.printf("GAS DETECTED:        %s\n", gasDetected ? "true" : "false");
-  Serial.printf("TILT DETECTED:       %s\n", isTilt ? "true" : "false");
-  Serial.printf("EARTHQUAKE DETECTED: %s\n", isQuake ? "true" : "false");
-  Serial.printf("WATER DETECTED:      %s\n", isWater ? "true" : "false");
-  Serial.println();
-  Serial.println("[HTTP DEBUG]");
-  Serial.print("Request URL:        "); Serial.println(RESQ_SERVER_URL);
-  String safePayload = requestBody;
-  safePayload.replace(DEVICE_API_KEY, "***REDACTED***");
-  Serial.print("Payload:            "); Serial.println(safePayload);
-  Serial.printf("HTTP RESPONSE CODE: %d\n", httpCode);
-  Serial.print("Backend Response:   "); Serial.println(httpResponse);
-  Serial.println("----------------------------------------------------");
+  if (httpCode == 200 || httpCode == 201) {
+    lastBackendStatus = "CONNECTED";
+    lastHttpRequest = "BACKEND ACKNOWLEDGED REQUEST";
+    if (httpResponse.indexOf("\"saved\":true") >= 0) {
+      lastDbStatus = "CONFIRMED";
+      lastTransmissionResult = "DATA ACCEPTED BY BACKEND";
+    } else {
+      lastDbStatus = "NOT CONFIRMED";
+      lastTransmissionResult = "BACKEND ACKNOWLEDGED REQUEST (DB PENDING)";
+    }
+  } else if (httpCode > 0) {
+    lastBackendStatus = "HTTP " + String(httpCode);
+    lastHttpRequest = "REQUEST REJECTED";
+    lastDbStatus = "NOT CONFIRMED";
+    lastTransmissionResult = "FAILED: HTTP " + String(httpCode);
+  } else {
+    lastBackendStatus = "DISCONNECTED";
+    lastHttpRequest = "REQUEST FAILED";
+    lastDbStatus = "UNKNOWN";
+    lastTransmissionResult = "FAILED: " + httpResponse;
+  }
+
+  transmissionState = "COMPLETED";
+
+  // Reset window peak and energy counters if alert cooldown has elapsed
+  if (millis() >= quakeAlertUntil) {
+    peakVibrationInWindow = 0.04;
+    tremorSamplesInWindow = 0;
+  }
+}
 
   // Reset window peak and energy counters if alert cooldown has elapsed
   if (millis() >= quakeAlertUntil) {
@@ -700,6 +752,7 @@ void runInteractiveTest() {
   "deviceId": "RESQ-NODE-01",
   "apiKey": "resq_iot_secure_key_2026",
   "seq": 142,
+  "sequenceNumber": 142,
   "hasWaterSensor": false,
   "gas": 140,
   "smoke": 140,

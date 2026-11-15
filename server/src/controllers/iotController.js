@@ -235,15 +235,23 @@ const postReading = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: 'Telemetry reading recorded successfully',
-      readingId: reading._id,
+      message: 'Sensor data received and saved',
+      deviceId,
+      sequenceNumber: seq,
       seq,
+      saved: true,
+      receivedAt: reading.timestamp.toISOString(),
+      readingId: reading._id,
       alertsTriggered: triggeredAlerts.length,
       alerts: triggeredAlerts.map(a => ({ id: a._id, title: a.title, severity: a.severity })),
     });
   } catch (error) {
     console.error('[INGEST DIAGNOSTIC] ❌ Error saving reading:', error.message);
-    next(error);
+    res.status(500).json({
+      success: false,
+      message: 'Database persistence error: ' + error.message,
+      saved: false,
+    });
   }
 };
 
@@ -318,6 +326,9 @@ const getLatestReadings = async (req, res, next) => {
         lastSeenAt: device ? device.lastSeenAt : null,
         latestReading: activeReading,
         reading: activeReading,
+        sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
+        seq: activeReading?.seq || 0,
+        lastSavedAt: activeReading?.createdAt || activeReading?.timestamp || null,
         timestamp: activeReading?.timestamp || new Date().toISOString(),
         devices: devices.map((d) => ({
           deviceId: d.deviceId,
@@ -347,6 +358,9 @@ const getLatestReadings = async (req, res, next) => {
       count: devices.length,
       latestReading: activeReading,
       reading: activeReading,
+      sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
+      seq: activeReading?.seq || 0,
+      lastSavedAt: activeReading?.createdAt || activeReading?.timestamp || null,
       timestamp: activeReading?.timestamp || new Date().toISOString(),
       devices: devices.map((d) => ({
         deviceId: d.deviceId,

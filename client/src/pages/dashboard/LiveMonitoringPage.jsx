@@ -24,6 +24,8 @@ const LiveMonitoringPage = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [telemetryHistory, setTelemetryHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [backendStatus, setBackendStatus] = useState('CHECKING...');
+  const [lastSavedTimestamp, setLastSavedTimestamp] = useState(null);
   const { latestReading, isConnected, simulationState } = useSocket();
 
   // Load device list
@@ -97,6 +99,10 @@ const LiveMonitoringPage = () => {
         const devId = selectedDeviceId || 'RESQ-NODE-01';
         const res = await api.get(`/sensors/latest?deviceId=${devId}`);
         if (res.data?.success) {
+          setBackendStatus('CONNECTED');
+          if (res.data.lastSavedAt) {
+            setLastSavedTimestamp(res.data.lastSavedAt);
+          }
           const fresh = res.data.latestReading || res.data.reading;
           if (fresh && (!selectedDeviceId || fresh.deviceId === selectedDeviceId)) {
             setTelemetryHistory((prev) => {
@@ -110,9 +116,15 @@ const LiveMonitoringPage = () => {
           if (res.data.devices && res.data.devices.length > 0) {
             setDevices(res.data.devices);
           }
+        } else {
+          setBackendStatus('DATABASE ERROR');
         }
       } catch (e) {
-        // silent
+        if (e.response?.status >= 500) {
+          setBackendStatus('DATABASE ERROR');
+        } else {
+          setBackendStatus('OFFLINE');
+        }
       }
     }, 2000);
 
@@ -133,7 +145,31 @@ const LiveMonitoringPage = () => {
 
   const freshnessStatus = isFresh ? 'FRESH' : (isStale ? 'STALE' : 'OFFLINE');
   const isSimulated = Boolean(activeReading.isSimulated);
-  const sequenceNumber = activeReading.seq !== undefined && activeReading.seq !== null ? `#${activeReading.seq}` : '--';
+  const sequenceNumber = activeReading.seq !== undefined && activeReading.seq !== null ? `#${activeReading.seq}` : (activeReading.sequenceNumber !== undefined && activeReading.sequenceNumber !== null ? `#${activeReading.sequenceNumber}` : '--');
+
+  // Device Connection Status & Data Freshness (Part 8 exact states)
+  let deviceConnectionStatus = 'WAITING FOR DATA';
+  let dataFreshness = 'WAITING FOR DATA';
+
+  if (backendStatus === 'DATABASE ERROR') {
+    deviceConnectionStatus = 'DATABASE ERROR';
+    dataFreshness = 'DATABASE ERROR';
+  } else if (backendStatus === 'OFFLINE') {
+    deviceConnectionStatus = 'OFFLINE';
+    dataFreshness = 'OFFLINE';
+  } else if (readingTime === 0) {
+    deviceConnectionStatus = 'WAITING FOR DATA';
+    dataFreshness = 'WAITING FOR DATA';
+  } else if (isFresh) {
+    deviceConnectionStatus = 'CONNECTED';
+    dataFreshness = 'CONNECTED';
+  } else if (isStale) {
+    deviceConnectionStatus = 'DATA STALE';
+    dataFreshness = 'DATA STALE';
+  } else {
+    deviceConnectionStatus = 'OFFLINE';
+    dataFreshness = 'OFFLINE';
+  }
 
   // Status assessments against standard safety thresholds (NO FAKE FALLBACKS)
   const temp = activeReading.temperature !== undefined && activeReading.temperature !== null ? activeReading.temperature : null;
@@ -237,6 +273,32 @@ const LiveMonitoringPage = () => {
 
           <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs text-slate-600 font-mono">
             <div>
+              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Device Status</span>
+              <span
+                className={`font-bold text-[10px] px-2 py-0.5 rounded ${
+                  deviceConnectionStatus === 'CONNECTED'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : deviceConnectionStatus === 'DATA STALE'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-rose-100 text-rose-800'
+                }`}
+              >
+                {deviceConnectionStatus}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Backend Ingest</span>
+              <span
+                className={`font-bold text-[10px] px-2 py-0.5 rounded ${
+                  backendStatus === 'CONNECTED'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-rose-100 text-rose-800'
+                }`}
+              >
+                {backendStatus}
+              </span>
+            </div>
+            <div>
               <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Data Stream</span>
               <span
                 className={`font-semibold ${
@@ -250,14 +312,14 @@ const LiveMonitoringPage = () => {
               <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Freshness</span>
               <span
                 className={`font-bold text-[10px] px-2 py-0.5 rounded ${
-                  isFresh
+                  dataFreshness === 'CONNECTED'
                     ? 'bg-emerald-100 text-emerald-800'
-                    : isStale
+                    : dataFreshness === 'DATA STALE'
                     ? 'bg-amber-100 text-amber-800'
                     : 'bg-rose-100 text-rose-800'
                 }`}
               >
-                {freshnessStatus} {isFresh ? '(<30s)' : ''}
+                {dataFreshness} {dataFreshness === 'CONNECTED' ? '(<30s)' : ''}
               </span>
             </div>
             <div>
@@ -265,19 +327,19 @@ const LiveMonitoringPage = () => {
               <span className="font-semibold text-teal-700">{sequenceNumber}</span>
             </div>
             <div>
-              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Backend Ingest</span>
-              <span className="font-semibold text-emerald-600">200 OK</span>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Wi-Fi Signal</span>
-              <span className="font-semibold">{activeReading.rssi ?? selectedDevice.metadata?.signalRssi ?? -55} dBm</span>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Last Telemetry</span>
+              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Last Received</span>
               <span className="font-semibold">
                 {readingTime > 0
                   ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                   : 'No packets yet'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase text-slate-400 block font-sans font-semibold">Last DB Save</span>
+              <span className="font-semibold">
+                {lastSavedTimestamp
+                  ? new Date(lastSavedTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                  : (readingTime > 0 ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--')}
               </span>
             </div>
           </div>

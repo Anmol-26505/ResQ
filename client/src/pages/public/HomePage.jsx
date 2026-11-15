@@ -39,6 +39,10 @@ const HomePage = () => {
   const [testingTelegram, setTestingTelegram] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState(null);
 
+  // Diagnostic State (Part 8)
+  const [backendStatus, setBackendStatus] = useState('CHECKING...');
+  const [lastSavedTimestamp, setLastSavedTimestamp] = useState(null);
+
   const { latestReading, isConnected, recentAlerts } = useSocket();
 
   // Load initial devices and recent telemetry
@@ -122,6 +126,10 @@ const HomePage = () => {
         ]);
 
         if (sensorRes.data?.success) {
+          setBackendStatus('CONNECTED');
+          if (sensorRes.data.lastSavedAt) {
+            setLastSavedTimestamp(sensorRes.data.lastSavedAt);
+          }
           const freshReading = sensorRes.data.latestReading || sensorRes.data.reading;
           if (freshReading && (!selectedDeviceId || freshReading.deviceId === selectedDeviceId)) {
             setTelemetryHistory((prev) => {
@@ -143,13 +151,19 @@ const HomePage = () => {
               setSelectedDeviceId(sensorRes.data.devices[0].deviceId);
             }
           }
+        } else {
+          setBackendStatus('DATABASE ERROR');
         }
 
         if (alertsRes.data?.success) {
           setActiveAlerts(alertsRes.data.alerts);
         }
       } catch (err) {
-        // Silent polling catch to avoid intrusive console errors during network blips
+        if (err.response?.status >= 500) {
+          setBackendStatus('DATABASE ERROR');
+        } else {
+          setBackendStatus('OFFLINE');
+        }
       }
     }, 2000);
 
@@ -196,7 +210,31 @@ const HomePage = () => {
   const freshnessStatus = isFresh ? 'FRESH' : (isStale ? 'STALE' : 'OFFLINE');
   const isSimulated = Boolean(currentData.isSimulated);
   const dataSource = isSimulated ? 'SIMULATOR' : (currentData.deviceId ? 'REAL HARDWARE' : 'STANDBY');
-  const sequenceNumber = currentData.seq !== undefined && currentData.seq !== null ? `#${currentData.seq}` : '--';
+  const sequenceNumber = currentData.seq !== undefined && currentData.seq !== null ? `#${currentData.seq}` : (currentData.sequenceNumber !== undefined && currentData.sequenceNumber !== null ? `#${currentData.sequenceNumber}` : '--');
+
+  // Device Connection Status & Data Freshness (Exact Part 8 Specification)
+  let deviceConnectionStatus = 'WAITING FOR DATA';
+  let dataFreshness = 'WAITING FOR DATA';
+
+  if (backendStatus === 'DATABASE ERROR') {
+    deviceConnectionStatus = 'DATABASE ERROR';
+    dataFreshness = 'DATABASE ERROR';
+  } else if (backendStatus === 'OFFLINE') {
+    deviceConnectionStatus = 'OFFLINE';
+    dataFreshness = 'OFFLINE';
+  } else if (readingTime === 0) {
+    deviceConnectionStatus = 'WAITING FOR DATA';
+    dataFreshness = 'WAITING FOR DATA';
+  } else if (isFresh) {
+    deviceConnectionStatus = 'CONNECTED';
+    dataFreshness = 'CONNECTED';
+  } else if (isStale) {
+    deviceConnectionStatus = 'DATA STALE';
+    dataFreshness = 'DATA STALE';
+  } else {
+    deviceConnectionStatus = 'OFFLINE';
+    dataFreshness = 'OFFLINE';
+  }
 
   // Extraction of all physical sensor metrics (NO FAKE / MOCK NUMBERS IN PRODUCTION)
   const flameDetected = Boolean(currentData.flame);
@@ -414,14 +452,42 @@ const HomePage = () => {
         </div>
       </div>
 
-      {/* COMPACT DEVICE DIAGNOSTIC BAR (Hardware & Cloud Sync Status) */}
+      {/* COMPACT DEVICE DIAGNOSTIC BAR (Hardware & Cloud Sync Status - Part 8) */}
       <div className="bg-slate-900 text-slate-200 p-3 sm:p-4 rounded-2xl border border-slate-800 shadow-md flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
           <div className="flex items-center gap-2">
             <Radio className="w-4 h-4 text-teal-400" />
             <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Device ID:</span>
             <span className="font-mono font-bold text-white bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
               {selectedDevice?.deviceId || 'RESQ-NODE-01'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Device Status:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                deviceConnectionStatus === 'CONNECTED'
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                  : deviceConnectionStatus === 'DATA STALE'
+                  ? 'bg-amber-950 text-amber-300 border border-amber-700'
+                  : 'bg-rose-950 text-rose-300 border border-rose-700'
+              }`}
+            >
+              {deviceConnectionStatus}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Backend Status:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                backendStatus === 'CONNECTED'
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                  : 'bg-rose-950 text-rose-300 border border-rose-700'
+              }`}
+            >
+              {backendStatus}
             </span>
           </div>
 
@@ -442,19 +508,19 @@ const HomePage = () => {
             <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Freshness:</span>
             <span
               className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
-                isFresh
+                dataFreshness === 'CONNECTED'
                   ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                  : isStale
+                  : dataFreshness === 'DATA STALE'
                   ? 'bg-amber-950 text-amber-300 border border-amber-700'
                   : 'bg-rose-950 text-rose-300 border border-rose-700'
               }`}
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  isFresh ? 'bg-emerald-400 animate-pulse' : isStale ? 'bg-amber-400' : 'bg-rose-400'
+                  dataFreshness === 'CONNECTED' ? 'bg-emerald-400 animate-pulse' : dataFreshness === 'DATA STALE' ? 'bg-amber-400' : 'bg-rose-400'
                 }`}
               />
-              {freshnessStatus} {isFresh ? '(< 30s)' : ''}
+              {dataFreshness} {dataFreshness === 'CONNECTED' ? '(< 30s)' : ''}
             </span>
           </div>
 
@@ -466,12 +532,16 @@ const HomePage = () => {
 
         <div className="flex flex-wrap items-center gap-4 text-slate-400 text-[11px] font-mono">
           <div>
-            <span className="font-sans uppercase text-[10px] text-slate-500 font-bold mr-1">Backend Ingestion:</span>
-            <span className="text-emerald-400 font-semibold font-mono">ONLINE (200 OK)</span>
+            <span className="font-sans uppercase text-[10px] text-slate-500 font-bold mr-1">Last Received:</span>
+            <span className="text-slate-200 font-mono">{lastTimestamp}</span>
           </div>
           <div>
-            <span className="font-sans uppercase text-[10px] text-slate-500 font-bold mr-1">Last Update:</span>
-            <span className="text-slate-200 font-mono">{lastTimestamp}</span>
+            <span className="font-sans uppercase text-[10px] text-slate-500 font-bold mr-1">Last DB Save:</span>
+            <span className="text-slate-200 font-mono">
+              {lastSavedTimestamp
+                ? new Date(lastSavedTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                : (lastTimestamp !== 'Awaiting live stream' ? lastTimestamp : '--')}
+            </span>
           </div>
         </div>
       </div>
