@@ -531,4 +531,56 @@ describe('ResQ Backend API Suite', () => {
     assert.equal(reading.earthquake, true, 'earthquake must be true in latest reading');
     assert.equal(reading.vibration, 1.85, 'vibration must be 1.85 in latest reading');
   });
+
+  test('25. Idempotent retry: Resending same sequence number returns databaseSaved: true without duplicate insertion', async () => {
+    const testSeq = 999;
+    // Initial post
+    const res1 = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        seq: testSeq,
+        gas: 120,
+      });
+
+    assert.equal(res1.status, 201);
+    assert.equal(res1.body.success, true);
+    assert.equal(res1.body.databaseSaved, true);
+    assert.equal(res1.body.saved, true);
+    assert.equal(res1.body.sequenceNumber, testSeq);
+
+    const countBefore = await SensorReading.countDocuments({ deviceId: testDeviceId, seq: testSeq });
+    assert.equal(countBefore, 1);
+
+    // Retried post with identical sequence number
+    const res2 = await request(app)
+      .post('/api/sensors/update')
+      .set('x-api-key', testApiKey)
+      .send({
+        deviceId: testDeviceId,
+        seq: testSeq,
+        gas: 120,
+      });
+
+    assert.equal(res2.status, 200);
+    assert.equal(res2.body.success, true);
+    assert.equal(res2.body.databaseSaved, true);
+    assert.equal(res2.body.saved, true);
+    assert.equal(res2.body.isDuplicate, true);
+    assert.equal(res2.body.sequenceNumber, testSeq);
+
+    const countAfter = await SensorReading.countDocuments({ deviceId: testDeviceId, seq: testSeq });
+    assert.equal(countAfter, 1, 'Duplicate record must not be created on retry');
+  });
+
+  test('26. GET /api/sensors/latest returns databaseSaved: true and consistent sequence numbers', async () => {
+    const res = await request(app).get(`/api/sensors/latest?deviceId=${testDeviceId}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.databaseSaved, true);
+    assert.ok(res.body.sequenceNumber >= 999);
+    assert.ok(res.body.latestReading);
+    assert.ok(res.body.lastSavedAt);
+  });
 });

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Device = require('../models/Device');
 const SensorReading = require('../models/SensorReading');
 const Alert = require('../models/Alert');
@@ -143,6 +144,46 @@ const postReading = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid gas value: must be a number' });
     }
 
+    // Check MongoDB database connectivity state before attempting operations
+    if (mongoose.connection.readyState !== 1) {
+      console.error('[INGEST DIAGNOSTIC] ❌ Database unavailable. mongoose.connection.readyState =', mongoose.connection.readyState);
+      return res.status(503).json({
+        success: false,
+        message: 'Database is currently unavailable',
+        deviceId,
+        sequenceNumber: seq,
+        seq,
+        databaseSaved: false,
+        saved: false,
+      });
+    }
+
+    // Idempotency: Check if this exact sequence packet was already saved (avoids duplicate records on HTTP retries)
+    if (seq > 0) {
+      const existingDoc = await SensorReading.findOne({
+        deviceId,
+        seq,
+      }).sort({ timestamp: -1 });
+
+      if (existingDoc) {
+        console.log(`[INGEST DIAGNOSTIC] ℹ️ Idempotent retry detected for ${deviceId} (seq: ${seq}). Returning confirmed save.`);
+        return res.status(200).json({
+          success: true,
+          message: 'Sensor data saved successfully',
+          deviceId,
+          sequenceNumber: seq,
+          seq,
+          databaseSaved: true,
+          saved: true,
+          isDuplicate: true,
+          readingId: existingDoc._id,
+          receivedAt: existingDoc.timestamp ? existingDoc.timestamp.toISOString() : new Date().toISOString(),
+          alertsTriggered: 0,
+          alerts: [],
+        });
+      }
+    }
+
     const mpuData = (ax !== null || gx !== null) ? { ax, ay, az, gx, gy, gz } : undefined;
 
     console.log(`[INGEST DIAGNOSTIC] Telemetry received from ${deviceId} (seq: ${seq}): flame=${flame}, gas=${gas}, smoke=${smoke}, tilt=${tilt} (${tiltAngle}°), quake=${earthquake} (${vibration}g), dist=${distance}cm, water=${water}`);
@@ -235,10 +276,11 @@ const postReading = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: 'Sensor data received and saved',
+      message: 'Sensor data saved successfully',
       deviceId,
       sequenceNumber: seq,
       seq,
+      databaseSaved: true,
       saved: true,
       receivedAt: reading.timestamp.toISOString(),
       readingId: reading._id,
@@ -250,7 +292,12 @@ const postReading = async (req, res, next) => {
     res.status(500).json({
       success: false,
       message: 'Database persistence error: ' + error.message,
+      deviceId: req.body?.deviceId || 'UNKNOWN',
+      sequenceNumber: req.body?.seq || 0,
+      seq: req.body?.seq || 0,
+      databaseSaved: false,
       saved: false,
+      error: error.message,
     });
   }
 };
@@ -306,6 +353,16 @@ const getDeviceReadings = async (req, res, next) => {
 // @access  Public / Optional Protect
 const getLatestReadings = async (req, res, next) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database is currently unavailable',
+        databaseSaved: false,
+        reading: null,
+        latestReading: null,
+      });
+    }
+
     const { deviceId } = req.query;
 
     const devices = await Device.find({}).select('deviceId name status lastSeenAt latestReading location supportedSensors');
@@ -313,11 +370,38 @@ const getLatestReadings = async (req, res, next) => {
     if (deviceId) {
       const devUpper = deviceId.toUpperCase();
       const [latest, device] = await Promise.all([
-        SensorReading.findOne({ deviceId: devUpper }).sort({ timestamp: -1 }),
+        SensorReading.findOne({ deviceId: devUpper }).sort({ timestamp: -1, _id: -1 }),
         Device.findOne({ deviceId: devUpper }),
       ]);
 
       const activeReading = latest || device?.latestReading || null;
+
+      if (!activeReading) {
+        return res.json({
+          success: true,
+          message: 'No sensor readings found in database',
+          deviceId: devUpper,
+          deviceStatus: device ? device.status : 'offline',
+          lastSeenAt: device ? device.lastSeenAt : null,
+          latestReading: null,
+          reading: null,
+          sequenceNumber: 0,
+          seq: 0,
+          databaseSaved: false,
+          lastSavedAt: null,
+          timestamp: null,
+          devices: devices.map((d) => ({
+            deviceId: d.deviceId,
+            name: d.name,
+            status: d.status,
+            location: d.location,
+            lastSeenAt: d.lastSeenAt,
+            latestReading: d.latestReading,
+            supportedSensors: d.supportedSensors,
+          })),
+          count: devices.length,
+        });
+      }
 
       return res.json({
         success: true,
@@ -328,6 +412,7 @@ const getLatestReadings = async (req, res, next) => {
         reading: activeReading,
         sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
         seq: activeReading?.seq || 0,
+        databaseSaved: true,
         lastSavedAt: activeReading?.createdAt || activeReading?.timestamp || null,
         timestamp: activeReading?.timestamp || new Date().toISOString(),
         devices: devices.map((d) => ({
@@ -345,9 +430,9 @@ const getLatestReadings = async (req, res, next) => {
 
     // Return latest readings for all known devices, plus the overall latest reading
     // Prioritize non-simulated real hardware telemetry over background simulation
-    let mostRecent = await SensorReading.findOne({ isSimulated: false }).sort({ timestamp: -1 });
+    let mostRecent = await SensorReading.findOne({ isSimulated: false }).sort({ timestamp: -1, _id: -1 });
     if (!mostRecent) {
-      mostRecent = await SensorReading.findOne({}).sort({ timestamp: -1 });
+      mostRecent = await SensorReading.findOne({}).sort({ timestamp: -1, _id: -1 });
     }
 
     const primaryDevice = devices.find((d) => d.deviceId === 'RESQ-NODE-01') || devices[0];
@@ -360,6 +445,7 @@ const getLatestReadings = async (req, res, next) => {
       reading: activeReading,
       sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
       seq: activeReading?.seq || 0,
+      databaseSaved: Boolean(activeReading),
       lastSavedAt: activeReading?.createdAt || activeReading?.timestamp || null,
       timestamp: activeReading?.timestamp || new Date().toISOString(),
       devices: devices.map((d) => ({

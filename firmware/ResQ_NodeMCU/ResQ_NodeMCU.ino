@@ -89,6 +89,9 @@ const float TANK_FULL_DISTANCE_CM  = 12.0;
 const unsigned long SEND_INTERVAL_MS = 2000;
 unsigned long lastSendTime = 0;
 
+// HTTP Timeout for BearSSL & HTTPClient (25 seconds for Render free tier cold starts)
+const unsigned long HTTP_TIMEOUT_MS = 25000;
+
 // Serial Monitor status summary interval (every 1000ms = 1 second)
 const unsigned long SERIAL_SUMMARY_INTERVAL_MS = 1000;
 unsigned long lastSummaryTime = 0;
@@ -130,14 +133,19 @@ unsigned long fireAlertUntil = 0;
 unsigned long gasAlertUntil = 0;
 
 // Sequence & Network Status Tracking
-unsigned long telemetrySeq = 0;
+unsigned long telemetrySeq = 1;
+int retryCount = 0;
+bool lastTxSuccess = false;
+unsigned long lastTxDurationMs = 0;
 int lastHttpCode = 0;
 String lastHttpResponse = "None yet";
 String lastHttpRequest = "STANDBY";
 String lastBackendStatus = "DISCONNECTED";
 String lastDbStatus = "UNKNOWN";
 String lastTransmissionResult = "STANDBY";
-String transmissionState = "STANDBY";
+String transmissionStage = "STANDBY";
+String failureReason = "";
+String dashboardSyncStatus = "NOT VERIFIED";
 String lastJsonPayload = "";
 
 // Forward Function Prototypes
@@ -151,6 +159,7 @@ void pollMPU6050Continuous();
 float readUltrasonicDistance();
 void printStatusSummary(int flamePinRaw, bool fireDetected, int gasRaw, bool gasDetected, bool isTilt, bool isQuake, float distCm);
 void transmitTelemetry();
+void verifyDashboardSync();
 void runInteractiveTest();
 
 // =============================================================
@@ -183,8 +192,10 @@ void setup() {
     Serial.println("   👉 Check wiring: SDA->D2, SCL->D1, VCC->VIN (5V), GND->GND, AD0->GND");
   }
 
-  // 3. Connect to Wi-Fi
+  // 3. Connect to Wi-Fi with automatic persistence and background reconnection
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("Connecting to Wi-Fi: %s", WIFI_SSID);
 
@@ -250,13 +261,16 @@ void loop() {
     printStatusSummary(flamePinRaw, fireDetected, gasRaw, gasDetected, isTilt, isQuake, distCm);
   }
 
-  // 3. Check for interactive serial commands ('c' = calibrate, 't' = stream test)
+  // 3. Check for interactive serial commands:
+  // 'c' = calibrate, 't' = stream test, 'v' = verify latest data API
   if (Serial.available()) {
     char cmd = Serial.read();
     if (cmd == 'c' || cmd == 'C') {
       calibrateMPU6050();
     } else if (cmd == 't' || cmd == 'T') {
       runInteractiveTest();
+    } else if (cmd == 'v' || cmd == 'V') {
+      verifyDashboardSync();
     }
   }
 
@@ -269,8 +283,9 @@ void loop() {
   }
   wasHazardActive = isAnyHazard;
 
-  // 5. Regular 2-second Telemetry Transmission to Render
-  if (now - lastSendTime >= SEND_INTERVAL_MS) {
+  // 5. Controlled Telemetry Transmission with Backoff Retry
+  unsigned long requiredInterval = lastTxSuccess ? SEND_INTERVAL_MS : (SEND_INTERVAL_MS + (retryCount > 2 ? 8000 : 4000));
+  if (now - lastSendTime >= requiredInterval) {
     lastSendTime = now;
     transmitTelemetry();
   }
@@ -283,92 +298,61 @@ void printStatusSummary(int flamePinRaw, bool fireDetected, int gasRaw, bool gas
   bool distValid = (distCm > 0.0 && distCm < 450.0);
 
   Serial.println();
-  Serial.println("================================================");
-  Serial.println("              RESQ LIVE MONITOR                 ");
-  Serial.println("================================================");
+  Serial.println("================================================================================");
+  Serial.println("              RESQ LIVE TELEMETRY & TRANSMISSION MONITOR                        ");
+  Serial.println("================================================================================");
   Serial.println();
-  Serial.println("DEVICE INFORMATION");
+  Serial.println("DEVICE INFORMATION:");
+  Serial.printf("  Device ID              : %s\n", DEVICE_ID);
+  Serial.printf("  WiFi Status            : %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
+  Serial.printf("  IP Address             : %s\n", (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString().c_str() : "0.0.0.0");
+  Serial.printf("  WiFi Signal Strength   : %d dBm\n", WiFi.RSSI());
+  Serial.printf("  Sequence Number        : #%lu (Retries: %d)\n", telemetrySeq, retryCount);
+  Serial.printf("  Device Timestamp       : %lu ms (Uptime: %lu s)\n", millis(), millis() / 1000);
   Serial.println();
-  Serial.printf("Device ID          : %s\n", DEVICE_ID);
-  Serial.printf("WiFi Status        : %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
-  Serial.printf("IP Address         : %s\n", (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString().c_str() : "0.0.0.0");
-  Serial.printf("Signal Strength    : %d dBm\n", WiFi.RSSI());
-  Serial.printf("Backend Status     : %s\n", lastBackendStatus.c_str());
-  Serial.println();
-  Serial.println("------------------------------------------------");
-  Serial.println("SENSOR READINGS");
-  Serial.println("------------------------------------------------");
-  Serial.println();
-  Serial.println("FLAME SENSOR");
-  Serial.printf("Digital Output     : %s\n", (flamePinRaw == HIGH) ? "HIGH" : "LOW");
-  Serial.printf("Fire Status        : %s\n", fireDetected ? "DETECTED" : "NORMAL");
-  Serial.println();
-  Serial.println("MQ-2 SENSOR");
-  Serial.printf("Raw ADC            : %d\n", gasRaw);
-  Serial.printf("Threshold          : %d\n", GAS_HAZARD_THRESHOLD);
-  Serial.printf("Gas Status         : %s\n", gasDetected ? "DETECTED" : "NORMAL");
-  Serial.println();
-  Serial.println("MPU6050");
-  Serial.printf("Accelerometer X    : %.2f\n", lastRawAx);
-  Serial.printf("Accelerometer Y    : %.2f\n", lastRawAy);
-  Serial.printf("Accelerometer Z    : %.2f\n", lastRawAz);
-  Serial.println();
-  Serial.printf("Gyroscope X        : %.2f\n", lastRawGx);
-  Serial.printf("Gyroscope Y        : %.2f\n", lastRawGy);
-  Serial.printf("Gyroscope Z        : %.2f\n", lastRawGz);
-  Serial.println();
-  Serial.printf("Tilt Angle         : %.1f\n", currentTiltAngle);
-  Serial.printf("Vibration          : %.2f\n", peakVibrationInWindow);
-  Serial.println();
-  Serial.printf("Tilt Status        : %s\n", isTilt ? "DETECTED" : "NORMAL");
-  Serial.printf("Earthquake Status  : %s\n", isQuake ? "DETECTED" : "NORMAL");
-  Serial.println();
-  Serial.println("ULTRASONIC SENSOR");
+  Serial.println("SENSOR READINGS:");
+  Serial.printf("  Flame Sensor (D5)      : %s (Raw DOUT: %s)\n", fireDetected ? "CRITICAL: FLAME DETECTED" : "SAFE", (flamePinRaw == HIGH) ? "HIGH" : "LOW");
+  Serial.printf("  MQ-2 Gas / Smoke (A0)  : %d ADC (Status: %s, Threshold: %d)\n", gasRaw, gasDetected ? "CRITICAL: GAS DETECTED" : "NORMAL", GAS_HAZARD_THRESHOLD);
+  Serial.printf("  MPU6050 Motion (D2/D1) : Tilt: %.1f deg (Status: %s)\n", currentTiltAngle, isTilt ? "CRITICAL: TILT DETECTED" : "NORMAL");
+  Serial.printf("                           Vibration: %.2f g (Status: %s)\n", peakVibrationInWindow, isQuake ? "CRITICAL: QUAKE DETECTED" : "NORMAL");
+  Serial.printf("                           Accel [X: %.2f g, Y: %.2f g, Z: %.2f g]\n", lastRawAx, lastRawAy, lastRawAz);
+  Serial.printf("                           Gyro  [X: %.1f deg/s, Y: %.1f deg/s, Z: %.1f deg/s]\n", lastRawGx, lastRawGy, lastRawGz);
   if (distValid) {
-    Serial.printf("Distance           : %.1f cm\n", distCm);
-    Serial.println("Reading Status     : VALID");
+    Serial.printf("  Ultrasonic Dist (D6/D7): %.1f cm (Status: VALID ECHO)\n", distCm);
   } else {
-    Serial.println("Distance           : TIMEOUT / NO ECHO");
-    Serial.println("Reading Status     : INVALID");
+    Serial.println("  Ultrasonic Dist (D6/D7): TIMEOUT / NO ECHO (Status: OUT OF RANGE)");
   }
+  Serial.println("  Water Sensor           : NOT CONNECTED (Moisture: N/A)");
   Serial.println();
-  Serial.println("WATER SENSOR");
-  Serial.println("Status             : NOT CONNECTED");
+  Serial.println("HAZARDS EVALUATION:");
+  Serial.printf("  Fire: %s | Gas: %s | Tilt: %s | Earthquake: %s | Overall: %s\n",
+                fireDetected ? "DETECTED" : "SAFE",
+                gasDetected ? "DETECTED" : "SAFE",
+                isTilt ? "DETECTED" : "SAFE",
+                isQuake ? "DETECTED" : "SAFE",
+                (fireDetected || gasDetected || isTilt || isQuake) ? "CRITICAL HAZARD ACTIVE" : "ALL SYSTEMS NORMAL");
   Serial.println();
-  Serial.println("------------------------------------------------");
-  Serial.println("DATA TRANSMISSION");
-  Serial.println("------------------------------------------------");
+  Serial.println("DATA TRANSMISSION STATUS:");
+  Serial.printf("  POST Destination URL   : %s\n", RESQ_SERVER_URL);
+  Serial.printf("  Latest Data API URL    : %s\n", RESQ_DATA_API_URL);
+  Serial.printf("  Transmission Stage     : %s\n", transmissionStage.c_str());
+  if (failureReason.length() > 0) {
+    Serial.printf("  Failure Reason         : %s\n", failureReason.c_str());
+  }
+  Serial.printf("  Transmission Duration  : %lu ms\n", lastTxDurationMs);
+  Serial.printf("  HTTP Status Code       : %d\n", lastHttpCode);
+  Serial.printf("  Backend Response Body  : %s\n", lastHttpResponse.c_str());
+  Serial.printf("  Database Save Status   : %s\n", lastDbStatus.c_str());
+  Serial.printf("  Transmission Result    : %s\n", lastTransmissionResult.c_str());
+  Serial.printf("  Dashboard Sync Status  : %s (Type 'v' in Serial Monitor to query)\n", dashboardSyncStatus.c_str());
   Serial.println();
-  Serial.printf("Transmission       : %s\n", transmissionState.c_str());
-  Serial.println();
-  Serial.println("POST DESTINATION:");
-  Serial.println(RESQ_SERVER_URL);
-  Serial.println();
-  Serial.println("Dashboard Address:");
-  Serial.println(RESQ_DASHBOARD_URL);
-  Serial.println();
-  Serial.println("Dashboard Data API:");
-  Serial.println(RESQ_DATA_API_URL);
-  Serial.println();
-  Serial.printf("Device Sequence    : %lu\n", telemetrySeq);
-  Serial.printf("Timestamp          : %lu ms\n", millis());
-  Serial.println();
-  Serial.println("JSON PAYLOAD:");
+  Serial.println("JSON PAYLOAD (API KEYS MASKED):");
   if (lastJsonPayload.length() > 0) {
     Serial.println(lastJsonPayload);
   } else {
     Serial.println("[Awaiting initial telemetry sample]");
   }
-  Serial.println();
-  Serial.printf("HTTP Status        : %d\n", lastHttpCode);
-  Serial.printf("Backend Response   : %s\n", lastHttpResponse.c_str());
-  Serial.println();
-  Serial.printf("Database Status    : %s\n", lastDbStatus.c_str());
-  Serial.println();
-  Serial.println("Transmission Result:");
-  Serial.println(lastTransmissionResult);
-  Serial.println();
-  Serial.println("================================================");
+  Serial.println("================================================================================");
 }
 
 // =============================================================
@@ -591,8 +575,9 @@ float readUltrasonicDistance() {
 // Telemetry Transmission to Render Cloud
 // =============================================================
 void transmitTelemetry() {
-  transmissionState = "STARTED";
-  telemetrySeq++;
+  unsigned long txStart = millis();
+  transmissionStage = "1. REQUEST CREATED";
+  failureReason = "";
 
   int gasRaw = analogRead(PIN_MQ2_GAS);
   bool gasInstant = (gasRaw >= GAS_HAZARD_THRESHOLD);
@@ -645,66 +630,155 @@ void transmitTelemetry() {
   lastJsonPayload = requestBody;
   lastJsonPayload.replace(DEVICE_API_KEY, "***REDACTED***");
 
-  int httpCode = -1;
-  String httpResponse = "";
-
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setBufferSizes(1024, 512); // Conserve heap and avoid TLS allocation failure
-    client.setTimeout(6000);          // 6-second timeout for Cloudflare + Render SSL roundtrip
-
-    HTTPClient http;
-    if (http.begin(client, RESQ_SERVER_URL)) {
-      http.addHeader("Content-Type", "application/json");
-      http.addHeader("x-api-key", DEVICE_API_KEY);
-
-      httpCode = http.POST(requestBody);
-      if (httpCode > 0) {
-        httpResponse = http.getString();
-      } else {
-        httpResponse = http.errorToString(httpCode);
-      }
-      http.end();
-    } else {
-      httpResponse = "HTTPClient begin failed";
-    }
-  } else {
-    httpResponse = "Wi-Fi Disconnected";
+  if (WiFi.status() != WL_CONNECTED) {
+    lastHttpCode = -4;
+    lastHttpResponse = "Wi-Fi Disconnected";
+    lastBackendStatus = "DISCONNECTED";
+    lastDbStatus = "UNKNOWN";
+    transmissionStage = "FAILED AT STAGE 1 (REQUEST CREATED)";
+    failureReason = "Wi-Fi is disconnected (WL_DISCONNECTED)";
+    lastTransmissionResult = "FAILED: Wi-Fi Disconnected";
+    lastTxSuccess = false;
+    lastTxDurationMs = millis() - txStart;
+    return;
   }
 
-  // Update transmission metrics accurately
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setBufferSizes(1024, 512); // Conserve heap and avoid TLS allocation failure
+  client.setTimeout(HTTP_TIMEOUT_MS); // 25-second timeout for Cloudflare + Render SSL roundtrip
+
+  HTTPClient http;
+  transmissionStage = "2. REQUEST SENT";
+
+  if (!http.begin(client, RESQ_SERVER_URL)) {
+    lastHttpCode = -1;
+    lastHttpResponse = "HTTPClient begin failed";
+    lastBackendStatus = "BEGIN FAILED";
+    lastDbStatus = "UNKNOWN";
+    transmissionStage = "FAILED AT STAGE 2 (REQUEST SENT)";
+    failureReason = "HTTPClient failed to initialize connection to endpoint";
+    lastTransmissionResult = "FAILED: Connection initiation error";
+    lastTxSuccess = false;
+    lastTxDurationMs = millis() - txStart;
+    return;
+  }
+
+  http.setTimeout(HTTP_TIMEOUT_MS); // CRITICAL: Overrides HTTPClient default 5000ms read timeout!
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-api-key", DEVICE_API_KEY);
+
+  int httpCode = http.POST(requestBody);
+  lastTxDurationMs = millis() - txStart;
   lastHttpCode = httpCode;
+
+  String httpResponse = "";
+  if (httpCode > 0) {
+    httpResponse = http.getString();
+  } else {
+    httpResponse = http.errorToString(httpCode);
+  }
+  http.end();
   lastHttpResponse = httpResponse;
 
-  if (httpCode == 200 || httpCode == 201) {
-    lastBackendStatus = "CONNECTED";
-    lastHttpRequest = "BACKEND ACKNOWLEDGED REQUEST";
-    if (httpResponse.indexOf("\"saved\":true") >= 0) {
-      lastDbStatus = "CONFIRMED";
-      lastTransmissionResult = "DATA ACCEPTED BY BACKEND";
+  if (httpCode < 0) {
+    lastBackendStatus = "FAILED (HTTP " + String(httpCode) + ")";
+    lastDbStatus = "UNKNOWN";
+    transmissionStage = "FAILED AT STAGE 3 (BACKEND RESPONSE RECEIVED)";
+    if (httpCode == -11) {
+      failureReason = "HTTP -11 (Read Timeout: Server exceeded 25s response window during cold start or slow DB)";
+    } else if (httpCode == -1) {
+      failureReason = "HTTP -1 (Connection Refused)";
+    } else {
+      failureReason = "HTTP " + String(httpCode) + " (" + httpResponse + ")";
+    }
+    lastTransmissionResult = "FAILED: " + failureReason;
+    lastTxSuccess = false;
+  } else if (httpCode >= 400) {
+    lastBackendStatus = "HTTP " + String(httpCode);
+    lastDbStatus = "NOT CONFIRMED";
+    transmissionStage = "FAILED AT STAGE 3 (BACKEND RESPONSE RECEIVED)";
+    failureReason = "HTTP " + String(httpCode) + " Error (" + httpResponse + ")";
+    lastTransmissionResult = "FAILED: HTTP " + String(httpCode);
+    lastTxSuccess = false;
+  } else if (httpCode == 200 || httpCode == 201) {
+    lastBackendStatus = "CONNECTED (HTTP " + String(httpCode) + ")";
+    transmissionStage = "3. BACKEND RESPONSE RECEIVED";
+
+    // Verify explicit database save confirmation
+    bool isDbSaved = (httpResponse.indexOf("\"databaseSaved\":true") >= 0) ||
+                     (httpResponse.indexOf("\"saved\":true") >= 0);
+
+    if (isDbSaved) {
+      transmissionStage = "4. DATABASE SAVE CONFIRMED";
+      lastDbStatus = "CONFIRMED (databaseSaved: true)";
+      transmissionStage = "5. TRANSMISSION SUCCESSFUL";
+      lastTransmissionResult = "SUCCESS: Sequence #" + String(telemetrySeq) + " Saved to MongoDB in " + String(lastTxDurationMs) + "ms";
+      lastTxSuccess = true;
     } else {
       lastDbStatus = "NOT CONFIRMED";
-      lastTransmissionResult = "BACKEND ACKNOWLEDGED REQUEST (DB PENDING)";
+      transmissionStage = "FAILED AT STAGE 4 (DATABASE SAVE CONFIRMED)";
+      failureReason = "Server responded with HTTP " + String(httpCode) + " but databaseSaved was not true";
+      lastTransmissionResult = "FAILED: Database save not confirmed by server";
+      lastTxSuccess = false;
     }
-  } else if (httpCode > 0) {
-    lastBackendStatus = "HTTP " + String(httpCode);
-    lastHttpRequest = "REQUEST REJECTED";
-    lastDbStatus = "NOT CONFIRMED";
-    lastTransmissionResult = "FAILED: HTTP " + String(httpCode);
-  } else {
-    lastBackendStatus = "DISCONNECTED";
-    lastHttpRequest = "REQUEST FAILED";
-    lastDbStatus = "UNKNOWN";
-    lastTransmissionResult = "FAILED: " + httpResponse;
   }
 
-  transmissionState = "COMPLETED";
+  // Controlled retry & sequence management
+  if (lastTxSuccess) {
+    retryCount = 0;
+    telemetrySeq++; // Increment sequence ONLY after confirmed database persistence!
+  } else {
+    retryCount++;
+    // Keep telemetrySeq unchanged so packet is retried idempotently
+  }
 
   // Reset window peak and energy counters if alert cooldown has elapsed
   if (millis() >= quakeAlertUntil) {
     peakVibrationInWindow = 0.04;
     tremorSamplesInWindow = 0;
+  }
+}
+
+// =============================================================
+// Dashboard API Verification (Query GET /api/sensors/latest)
+// =============================================================
+void verifyDashboardSync() {
+  if (WiFi.status() != WL_CONNECTED) {
+    dashboardSyncStatus = "WIFI DISCONNECTED";
+    Serial.println("❌ Cannot verify dashboard sync: Wi-Fi Disconnected");
+    return;
+  }
+
+  Serial.println();
+  Serial.println("🔍 Querying GET /api/sensors/latest to verify sequence sync...");
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setBufferSizes(1024, 512);
+  client.setTimeout(15000);
+
+  HTTPClient http;
+  String verifyUrl = String(RESQ_DATA_API_URL) + "?deviceId=" + String(DEVICE_ID);
+  if (http.begin(client, verifyUrl)) {
+    http.setTimeout(15000);
+    int code = http.GET();
+    if (code == 200) {
+      String body = http.getString();
+      unsigned long targetSeq = (lastTxSuccess ? (telemetrySeq - 1) : telemetrySeq);
+      String searchKey = "\"sequenceNumber\":" + String(targetSeq);
+      String searchKey2 = "\"seq\":" + String(targetSeq);
+      if (body.indexOf(searchKey) >= 0 || body.indexOf(searchKey2) >= 0) {
+        dashboardSyncStatus = "VERIFIED (Seq #" + String(targetSeq) + " Active)";
+        Serial.printf("✅ DASHBOARD SYNC CONFIRMED: Server returned Seq #%lu!\n", targetSeq);
+      } else {
+        dashboardSyncStatus = "PENDING / OUT OF SYNC";
+        Serial.printf("⚠️ Dashboard API responded (HTTP 200) but sequence #%lu not active yet.\n", targetSeq);
+      }
+    } else {
+      dashboardSyncStatus = "QUERY FAILED (HTTP " + String(code) + ")";
+      Serial.printf("❌ Verification GET failed with HTTP %d\n", code);
+    }
+    http.end();
   }
 }
 
