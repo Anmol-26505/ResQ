@@ -17,6 +17,7 @@ const sensorRoutes = require('./routes/sensorRoutes');
 const alertRoutes = require('./routes/alertRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const simulationRoutes = require('./routes/simulationRoutes');
+const controllerRoutes = require('./routes/controllerRoutes');
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use('/api/sensors', sensorRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/simulation', simulationRoutes);
+app.use('/api/controller', controllerRoutes);
 
 // Serve static frontend assets in production if client/dist exists
 const clientDistPath = path.resolve(__dirname, '../../client/dist');

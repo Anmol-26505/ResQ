@@ -5,6 +5,7 @@ const Alert = require('../models/Alert');
 const { processReadingAlerts } = require('../services/alertService');
 const { broadcastSensorReading, broadcastDeviceStatus } = require('../sockets/socketHandler');
 const { evaluateAndNotifyHazards } = require('../services/telegramService');
+const { getPublicHazardState } = require('../services/manualHazardService');
 
 // In-memory tilt persistence tracker to eliminate false transient tilt spikes
 // Map<deviceId, { consecutiveTiltCount: number, isConfirmedTilt: boolean, lastReadingTime: number }>
@@ -538,6 +539,19 @@ const getHazardStatus = async (req, res, next) => {
 
     const hasWaterHardware = devices.some((d) => d.latestReading?.hasWaterSensor);
 
+    // Integrate remote manual controller hazard states
+    const manualState = getPublicHazardState();
+    const manualH = manualState.hazards || {};
+
+    if (manualH.fire?.isActive) hasFire = true;
+    if (manualH.gas?.isActive && maxSmoke < 450) maxSmoke = 450;
+    if (manualH.tilt?.isActive) hasTilt = true;
+    if (manualH.earthquake?.isActive) {
+      hasEarthquake = true;
+      if (maxVibration < 2.5) maxVibration = 2.5;
+    }
+    if (manualH.water?.isActive) hasWater = true;
+
     const isCritical = hasFire || hasEarthquake || hasTilt || hasWater || maxSmoke > 400 || activeAlerts.some((a) => a.severity === 'critical');
     const isWarning = !isCritical && (maxSmoke > 250 || activeAlerts.some((a) => a.severity === 'warning'));
 
@@ -547,6 +561,7 @@ const getHazardStatus = async (req, res, next) => {
       overallStatus: isCritical ? 'critical' : (isWarning ? 'warning' : 'nominal'),
       activeAlertsCount: activeAlerts.length,
       onlineDevicesCount: devices.filter((d) => d.status === 'online').length,
+      manualHazards: manualState,
       hazards: {
         fire: {
           detected: hasFire,

@@ -45,7 +45,13 @@ const HomePage = () => {
   // Live device connection state derived from API secondsSinceLastSeen (not stale DB status field)
   const [deviceApiOnline, setDeviceApiOnline] = useState(null); // null = unknown, true = online, false = offline
 
-  const { latestReading, isConnected, recentAlerts } = useSocket();
+  const {
+    latestReading,
+    isConnected,
+    recentAlerts,
+    manualHazards = {},
+    manualHazardDetails = {},
+  } = useSocket();
 
   // Load initial devices and recent telemetry
   useEffect(() => {
@@ -278,29 +284,112 @@ const HomePage = () => {
     ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : 'Awaiting live stream';
 
-  // Hazard conditions based strictly on live data
-  const isFireHazard = flameDetected || (temp !== null && temp > 50);
-  const isSmokeHazard = (smoke !== null && smoke > 200) || (gas !== null && gas > 200);
-  const isTiltHazard = tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) >= 10);
-  const isQuakeHazard = earthquakeDetected || (vibration !== null && vibration >= 0.22);
-  
-  // Water hazard is only true if a genuine water sensor is present AND triggered, or simulated in test mode
-  const isWaterHazard = Boolean(hasWaterSensor && (waterDetected || (waterLevel !== null && waterLevel > 40)));
+  // Hazard conditions based on Physical Sensors (hardware or simulator)
+  const physicalFireHazard = flameDetected || (temp !== null && temp > 50);
+  const physicalSmokeHazard = (smoke !== null && smoke > 200) || (gas !== null && gas > 200);
+  const physicalTiltHazard = tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) >= 10);
+  const physicalQuakeHazard = earthquakeDetected || (vibration !== null && vibration >= 0.22);
+  const physicalWaterHazard = Boolean(hasWaterSensor && (waterDetected || (waterLevel !== null && waterLevel > 40)));
 
-  // Critical physical hazard currently active
-  const isAnyPhysicalHazard = isFireHazard || isSmokeHazard || isTiltHazard || isQuakeHazard || isWaterHazard;
+  // Final consolidated hazard state (Physical Sensors || Remote Manual Controller)
+  // Ensures neither source overwrites the other and both maintain separate state
+  const isFireHazard = physicalFireHazard || Boolean(manualHazards.fire);
+  const isSmokeHazard = physicalSmokeHazard || Boolean(manualHazards.gas);
+  const isTiltHazard = physicalTiltHazard || Boolean(manualHazards.tilt);
+  const isQuakeHazard = physicalQuakeHazard || Boolean(manualHazards.earthquake);
+  const isWaterHazard = physicalWaterHazard || Boolean(manualHazards.water);
+
+  // Grouped hazard flags
+  const isAnyPhysicalHazard = physicalFireHazard || physicalSmokeHazard || physicalTiltHazard || physicalQuakeHazard || physicalWaterHazard;
+  const isAnyManualHazard = Boolean(
+    manualHazards.fire || manualHazards.gas || manualHazards.tilt || manualHazards.earthquake || manualHazards.water
+  );
+  const isAnyHazardActive = isAnyPhysicalHazard || isAnyManualHazard;
 
   // Filter out any false/stale water alerts (e.g. 0% reading or no sensor) from blocking the dashboard
   const genuineActiveAlerts = activeAlerts.filter((a) => {
     if (a.sensorType === 'water' || a.sensorType === 'waterLevel') {
-      return Boolean(hasWaterSensor && (a.readingValue === true || Number(a.readingValue) > 40));
+      return Boolean((hasWaterSensor || manualHazards.water) && (a.readingValue === true || Number(a.readingValue) > 40));
     }
     return true;
   });
 
-  // CRITICAL REQUIREMENT: Audible siren ONLY triggers on FRESH hardware hazards (< 30s), NEVER on old/stale/mock MongoDB alerts
-  const shouldSoundAlarm = isFresh && isAnyPhysicalHazard;
-  const anyHazardActive = shouldSoundAlarm;
+  // Siren sounds on FRESH physical hazard (< 30s) OR ANY active manual controller hazard!
+  const shouldSoundAlarm = (isFresh && isAnyPhysicalHazard) || isAnyManualHazard;
+  const anyHazardActive = shouldSoundAlarm || isAnyHazardActive;
+
+  // Compile active emergency alerts for simultaneous presentation
+  const activeEmergencyList = [];
+  if (isFireHazard) {
+    activeEmergencyList.push({
+      id: 'fire',
+      name: 'FIRE ALERT',
+      title: 'Active Fire Detected!',
+      description: 'Optical flame & infrared thermal radiation signature breach confirmed.',
+      source: manualHazards.fire
+        ? (physicalFireHazard ? 'Hardware Sensor + Manual Controller' : 'Manual Controller Override')
+        : (isSimulated ? 'Simulator' : 'Hardware Flame Sensor (D5)'),
+      icon: Flame,
+      color: 'rose',
+      border: 'border-rose-500 bg-rose-600',
+    });
+  }
+  if (isSmokeHazard) {
+    activeEmergencyList.push({
+      id: 'gas',
+      name: 'GAS ALERT',
+      title: 'Hazardous Gas / Smoke Leakage Detected!',
+      description: `Combustible gas & smoke concentration spiked to ${smoke || 450} PPM (Threshold: > 200 PPM)!`,
+      source: manualHazards.gas
+        ? (physicalSmokeHazard ? 'Hardware Sensor + Manual Controller' : 'Manual Controller Override')
+        : (isSimulated ? 'Simulator' : 'Hardware MQ-2 Sensor (A0)'),
+      icon: Wind,
+      color: 'amber',
+      border: 'border-amber-500 bg-amber-600',
+    });
+  }
+  if (isTiltHazard) {
+    activeEmergencyList.push({
+      id: 'tilt',
+      name: 'TILT ALERT',
+      title: 'Structural Building Tilt Detected!',
+      description: `Structural inclination (${tiltAngle ?? 14}°) exceeds calibrated baseline!`,
+      source: manualHazards.tilt
+        ? (physicalTiltHazard ? 'Hardware Sensor + Manual Controller' : 'Manual Controller Override')
+        : (isSimulated ? 'Simulator' : 'Hardware MPU6050 (D2/D1)'),
+      icon: Compass,
+      color: 'orange',
+      border: 'border-orange-500 bg-orange-600',
+    });
+  }
+  if (isQuakeHazard) {
+    activeEmergencyList.push({
+      id: 'earthquake',
+      name: 'EARTHQUAKE ALERT',
+      title: 'Seismic Earthquake Vibration Detected!',
+      description: `Seismic vibration tremor (${vibration || 2.4}g) registered! Immediate safety precautions advised.`,
+      source: manualHazards.earthquake
+        ? (physicalQuakeHazard ? 'Hardware Sensor + Manual Controller' : 'Manual Controller Override')
+        : (isSimulated ? 'Simulator' : 'Hardware MPU6050 (D2/D1)'),
+      icon: Activity,
+      color: 'purple',
+      border: 'border-purple-500 bg-purple-600',
+    });
+  }
+  if (isWaterHazard) {
+    activeEmergencyList.push({
+      id: 'water',
+      name: 'WATER LEAK ALERT',
+      title: 'Water Accumulation / Flood Detected!',
+      description: 'Critical liquid accumulation detected on facility floor surface.',
+      source: manualHazards.water
+        ? (physicalWaterHazard ? 'Hardware Sensor + Manual Controller' : 'Manual Controller Override')
+        : (isSimulated ? 'Simulator' : 'Liquid Contact Sensor'),
+      icon: Droplets,
+      color: 'cyan',
+      border: 'border-cyan-500 bg-cyan-600',
+    });
+  }
 
   // Web Audio Alarm Lifecycle: play continuous siren ONLY when FRESH physical hazard is active
   useEffect(() => {
@@ -748,52 +837,70 @@ const HomePage = () => {
         </div>
       </div>
 
-      {/* 4. Emergency Active Alert Banner (If Any Hazard Active) */}
-      {anyHazardActive && (
-        <div className="bg-rose-600 text-white p-4 sm:p-5 rounded-2xl shadow-lg border border-rose-700 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-pulse">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
-              <AlertTriangle className="w-6 h-6 text-white" />
+      {/* 4. Real-Time Multi-Hazard Emergency Alert Container (Supports Multiple Simultaneous Hazards) */}
+      {activeEmergencyList.length > 0 && (
+        <div className="space-y-3">
+          {/* Top Banner Alert Summary */}
+          <div className="bg-rose-950/80 border border-rose-600 rounded-2xl px-4 py-3 flex items-center justify-between text-xs text-rose-200">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+              <span className="font-extrabold uppercase tracking-wider text-rose-100">
+                Active Emergency Detected ({activeEmergencyList.length} Hazards Triggered)
+              </span>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-extrabold uppercase tracking-wider bg-white text-rose-700 px-2 py-0.5 rounded">
-                  Critical Emergency Alert
-                </span>
-                <span className="text-xs font-mono font-bold text-rose-100">
-                  Node: {selectedDevice?.deviceId || 'RESQ-NODE-01'}
-                </span>
-              </div>
-              <p className="text-sm font-bold mt-1 text-white">
-                {isFireHazard
-                  ? '🔥 Active fire & optical flame signature detected in facility!'
-                  : isSmokeHazard
-                  ? `💨 Smoke / gas concentration spiked to ${smoke} PPM (Threshold: > 200 PPM)!`
-                  : isTiltHazard
-                  ? `📐 Structural building tilt (${tiltAngle ?? 16}°) confirmed!`
-                  : isQuakeHazard
-                  ? `⚠️ Seismic vibration tremor (${vibration}g) registered!`
-                  : isWaterHazard
-                  ? (currentData?.isSimulated
-                      ? `💧 [SIMULATED TEST] Water leak / flood scenario active (Simulated Level: ${waterLevel || 85}%)!`
-                      : `💧 Water accumulation detected on floor (Moisture Level: ${waterLevel}%)!`)
-                  : genuineActiveAlerts.length > 0
-                  ? `⚠️ ${genuineActiveAlerts[0].title}: ${genuineActiveAlerts[0].message || 'Alert active'}`
-                  : '🟢 Safety monitoring active: All systems nominal.'}
-              </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  audioAlarmService.stopAlarm();
+                  setIsMuted(true);
+                  audioAlarmService.setMuted(true);
+                }}
+                className="px-3 py-1 bg-rose-900/80 hover:bg-rose-800 text-rose-200 border border-rose-700 rounded-lg font-bold text-[11px] transition-colors"
+              >
+                Mute Siren
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <button
-              onClick={() => {
-                handleTriggerScenario('nominal');
-                audioAlarmService.stopAlarm();
-              }}
-              className="w-full md:w-auto px-4 py-2 bg-white text-rose-700 hover:bg-rose-50 rounded-xl text-xs font-extrabold uppercase shadow-sm transition-all"
-            >
-              Silence & Reset to Safe
-            </button>
+          {/* Individual Hazard Emergency Cards */}
+          <div className="grid grid-cols-1 gap-3">
+            {activeEmergencyList.map((alert) => {
+              const AlertIcon = alert.icon;
+              return (
+                <div
+                  key={alert.id}
+                  className={`p-4 sm:p-5 rounded-2xl shadow-lg text-white border flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-pulse ${alert.border}`}
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                      <AlertIcon className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider bg-white text-slate-900 px-2.5 py-0.5 rounded-full shadow-sm">
+                          {alert.name}
+                        </span>
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/25 text-white border border-white/20">
+                          Source: {alert.source}
+                        </span>
+                      </div>
+                      <h4 className="text-base font-black mt-1 text-white tracking-tight">
+                        {alert.title}
+                      </h4>
+                      <p className="text-xs font-medium text-white/90 mt-0.5 leading-relaxed">
+                        {alert.description}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full md:w-auto self-end md:self-center">
+                    <span className="text-[11px] font-mono font-bold bg-white/20 px-2.5 py-1 rounded-lg">
+                      STATUS: ACTIVE
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -824,15 +931,22 @@ const HomePage = () => {
                 </div>
               </div>
 
-              <span
-                className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
-                  isFireHazard
-                    ? 'bg-rose-600 text-white shadow-sm'
-                    : 'bg-emerald-100 text-emerald-800'
-                }`}
-              >
-                {isFireHazard ? 'Fire Detected!' : 'Safe (No Fire)'}
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span
+                  className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
+                    isFireHazard
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  {isFireHazard ? 'Fire Detected!' : 'Safe (No Fire)'}
+                </span>
+                {isFireHazard && (
+                  <span className="text-[10px] font-bold text-rose-700 bg-rose-100/80 px-2 py-0.5 rounded border border-rose-300 font-mono">
+                    Src: {manualHazards.fire ? (physicalFireHazard ? 'Sensor + Controller' : 'Manual Controller') : 'Hardware Sensor'}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Fire Status Callout */}
@@ -895,15 +1009,22 @@ const HomePage = () => {
                 </div>
               </div>
 
-              <span
-                className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
-                  isSmokeHazard
-                    ? 'bg-amber-600 text-white shadow-sm'
-                    : 'bg-emerald-100 text-emerald-800'
-                }`}
-              >
-                {isSmokeHazard ? 'Smoke Alert!' : 'Air Quality Safe'}
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span
+                  className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
+                    isSmokeHazard
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  {isSmokeHazard ? 'Smoke Alert!' : 'Air Quality Safe'}
+                </span>
+                {isSmokeHazard && (
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-300 font-mono">
+                    Src: {manualHazards.gas ? (physicalSmokeHazard ? 'Sensor + Controller' : 'Manual Controller') : 'Hardware Sensor'}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Smoke PPM Callout */}
@@ -979,15 +1100,24 @@ const HomePage = () => {
                 </div>
               </div>
 
-              <span
-                className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
-                  isTiltHazard || isQuakeHazard
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'bg-emerald-100 text-emerald-800'
-                }`}
-              >
-                {isTiltHazard ? 'Sustained Tilt!' : (isQuakeHazard ? 'Seismic Tremor!' : 'Structure Stable')}
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span
+                  className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
+                    isTiltHazard || isQuakeHazard
+                      ? 'bg-orange-600 text-white shadow-sm'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  {isTiltHazard ? 'Sustained Tilt!' : (isQuakeHazard ? 'Seismic Tremor!' : 'Structure Stable')}
+                </span>
+                {(isTiltHazard || isQuakeHazard) && (
+                  <span className="text-[10px] font-bold text-orange-800 bg-orange-100/80 px-2 py-0.5 rounded border border-orange-300 font-mono">
+                    Src: {manualHazards.tilt || manualHazards.earthquake
+                      ? (physicalTiltHazard || physicalQuakeHazard ? 'Sensor + Controller' : 'Manual Controller')
+                      : 'Hardware MPU6050'}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Seismic Status Callout */}
@@ -1059,17 +1189,24 @@ const HomePage = () => {
                 </div>
               </div>
 
-              <span
-                className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
-                  isWaterHazard
-                    ? 'bg-cyan-600 text-white shadow-sm'
-                    : !hasWaterSensor
-                    ? 'bg-slate-100 text-slate-600'
-                    : 'bg-emerald-100 text-emerald-800'
-                }`}
-              >
-                {isWaterHazard ? 'Water Leak Alert!' : (!hasWaterSensor ? 'Sensor Not Connected' : 'Dry & Normal')}
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span
+                  className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider ${
+                    isWaterHazard
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : !hasWaterSensor
+                      ? 'bg-slate-100 text-slate-600'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  {isWaterHazard ? 'Water Leak Alert!' : (!hasWaterSensor ? 'Sensor Not Connected' : 'Dry & Normal')}
+                </span>
+                {isWaterHazard && (
+                  <span className="text-[10px] font-bold text-cyan-800 bg-cyan-100/80 px-2 py-0.5 rounded border border-cyan-300 font-mono">
+                    Src: {manualHazards.water ? (physicalWaterHazard ? 'Sensor + Controller' : 'Manual Controller') : 'Physical Probe'}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Water & Distance Status Callout */}

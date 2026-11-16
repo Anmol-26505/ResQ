@@ -22,6 +22,11 @@ import AnalyticsPage from './pages/dashboard/AnalyticsPage';
 import ArchitecturePage from './pages/dashboard/ArchitecturePage';
 import SettingsPage from './pages/dashboard/SettingsPage';
 
+// Remote Manual Hazard Controller Pages
+import ControllerLoginPage from './pages/controller/ControllerLoginPage';
+import ControllerDashboardPage from './pages/controller/ControllerDashboardPage';
+import ControllerProtectedRoute from './components/ControllerProtectedRoute';
+
 function App() {
   return (
     <Routes>
@@ -35,6 +40,20 @@ function App() {
       {/* Auth Routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+
+      {/* Remote Manual Hazard Controller Routes */}
+      <Route path="/controller/login" element={<ControllerLoginPage />} />
+      <Route path="/controllers/login" element={<Navigate to="/controller/login" replace />} />
+      <Route
+        path="/controller/dashboard"
+        element={
+          <ControllerProtectedRoute>
+            <ControllerDashboardPage />
+          </ControllerProtectedRoute>
+        }
+      />
+      <Route path="/controller" element={<Navigate to="/controller/dashboard" replace />} />
+      <Route path="/controllers" element={<Navigate to="/controller/dashboard" replace />} />
 
       {/* Authenticated Dashboard Routes */}
       <Route

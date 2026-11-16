@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { getSocket } from '../services/socket';
+import api from '../services/api';
 
 const SocketContext = createContext(null);
 
@@ -10,6 +11,18 @@ export const SocketProvider = ({ children }) => {
   const [deviceStatuses, setDeviceStatuses] = useState({});
   const [recentAlerts, setRecentAlerts] = useState([]);
   const [simulationState, setSimulationState] = useState({ isRunning: false, scenario: 'nominal' });
+
+  // Remote Manual Hazard Controller Real-Time States
+  const [manualHazards, setManualHazards] = useState({
+    fire: false,
+    water: false,
+    tilt: false,
+    earthquake: false,
+    gas: false,
+  });
+  const [manualHazardDetails, setManualHazardDetails] = useState({});
+  const [manualActiveCount, setManualActiveCount] = useState(0);
+  const [manualLastUpdated, setManualLastUpdated] = useState(null);
 
   useEffect(() => {
     const socket = getSocket();
@@ -50,6 +63,21 @@ export const SocketProvider = ({ children }) => {
       setSimulationState(status);
     };
 
+    const handleManualHazardUpdate = (data) => {
+      if (!data || !data.hazards) return;
+      const h = data.hazards;
+      setManualHazards({
+        fire: Boolean(h.fire?.isActive),
+        water: Boolean(h.water?.isActive),
+        tilt: Boolean(h.tilt?.isActive),
+        earthquake: Boolean(h.earthquake?.isActive),
+        gas: Boolean(h.gas?.isActive),
+      });
+      setManualHazardDetails(h);
+      setManualActiveCount(data.activeCount || 0);
+      setManualLastUpdated(data.lastUpdated || new Date().toISOString());
+    };
+
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('sensor:reading', handleSensorReading);
@@ -57,6 +85,7 @@ export const SocketProvider = ({ children }) => {
     socket.on('alert:new', handleNewAlert);
     socket.on('alert:updated', handleAlertUpdated);
     socket.on('simulation:status', handleSimulationStatus);
+    socket.on('hazard:manual_update', handleManualHazardUpdate);
 
     if (socket.connected) {
       setIsConnected(true);
@@ -70,8 +99,35 @@ export const SocketProvider = ({ children }) => {
       socket.off('alert:new', handleNewAlert);
       socket.off('alert:updated', handleAlertUpdated);
       socket.off('simulation:status', handleSimulationStatus);
+      socket.off('hazard:manual_update', handleManualHazardUpdate);
     };
   }, []);
+
+  // Fetch initial manual hazard states on component mount so page has immediate data
+  const refreshManualHazards = useCallback(async () => {
+    try {
+      const res = await api.get('/controller/status');
+      if (res.data?.success && res.data.hazards) {
+        const h = res.data.hazards;
+        setManualHazards({
+          fire: Boolean(h.fire?.isActive),
+          water: Boolean(h.water?.isActive),
+          tilt: Boolean(h.tilt?.isActive),
+          earthquake: Boolean(h.earthquake?.isActive),
+          gas: Boolean(h.gas?.isActive),
+        });
+        setManualHazardDetails(h);
+        setManualActiveCount(res.data.activeCount || 0);
+        setManualLastUpdated(res.data.lastUpdated || new Date().toISOString());
+      }
+    } catch (e) {
+      // Non-fatal fallback
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshManualHazards();
+  }, [refreshManualHazards]);
 
   const subscribeDevice = (deviceId) => {
     const socket = getSocket();
@@ -94,6 +150,11 @@ export const SocketProvider = ({ children }) => {
     deviceStatuses,
     recentAlerts,
     simulationState,
+    manualHazards,
+    manualHazardDetails,
+    manualActiveCount,
+    manualLastUpdated,
+    refreshManualHazards,
     subscribeDevice,
     unsubscribeDevice,
   };

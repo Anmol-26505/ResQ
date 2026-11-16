@@ -20,10 +20,15 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// Request interceptor to attach JWT token
+// Request interceptor to attach JWT token (supports operator or controller token)
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('resq_token');
+    const controllerToken = localStorage.getItem('resq_controller_token');
+    const userToken = localStorage.getItem('resq_token');
+    const token = (window.location.pathname.startsWith('/controller') && controllerToken)
+      ? controllerToken
+      : (controllerToken || userToken);
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -37,8 +42,9 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // If unauthorized and not already on auth pages, clear stale session
-      if (
+      if (window.location.pathname.startsWith('/controller')) {
+        localStorage.removeItem('resq_controller_token');
+      } else if (
         !window.location.pathname.startsWith('/login') &&
         !window.location.pathname.startsWith('/register') &&
         window.location.pathname !== '/'

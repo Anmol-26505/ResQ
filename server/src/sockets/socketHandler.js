@@ -1,4 +1,5 @@
 const { Server } = require('socket.io');
+const { getPublicHazardState, setSocketBroadcaster } = require('../services/manualHazardService');
 
 let io = null;
 
@@ -37,6 +38,14 @@ const initSocket = (httpServer) => {
 
   io.on('connection', (socket) => {
     console.log(`🔌 Client connected: ${socket.id} (Total connected: ${io.engine.clientsCount})`);
+
+    // Immediately transmit current active manual hazards state to freshly connected client
+    try {
+      const currentManualHazards = getPublicHazardState();
+      socket.emit('hazard:manual_update', currentManualHazards);
+    } catch (err) {
+      console.warn('Could not emit initial manual hazard state to socket:', err.message);
+    }
 
     // Allow client to subscribe to specific device updates
     socket.on('join:device', (deviceId) => {
@@ -100,6 +109,14 @@ const broadcastSimulationStatus = (status) => {
   io.emit('simulation:status', status);
 };
 
+const broadcastManualHazardUpdate = (state) => {
+  if (!io) return;
+  io.emit('hazard:manual_update', state);
+};
+
+// Wire socket broadcaster into manual hazard service
+setSocketBroadcaster(broadcastManualHazardUpdate);
+
 module.exports = {
   initSocket,
   getIO,
@@ -108,4 +125,5 @@ module.exports = {
   broadcastAlert,
   broadcastAlertUpdated,
   broadcastSimulationStatus,
+  broadcastManualHazardUpdate,
 };

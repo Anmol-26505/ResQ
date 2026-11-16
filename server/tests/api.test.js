@@ -604,4 +604,141 @@ describe('ResQ Backend API Suite', () => {
     assert.equal(res.body.isOnline, true, 'Device should be online after recent sensor POST');
     assert.equal(res.body.status, 'online', 'status should be online after recent POST');
   });
+
+  // -------------------------------------------------------------
+  // Remote Manual Hazard Controller Tests
+  // -------------------------------------------------------------
+  let controllerToken = '';
+
+  test('28. Controller Login: rejects invalid credentials', async () => {
+    const res = await request(app)
+      .post('/api/controller/login')
+      .send({
+        username: 'WrongUser',
+        password: 'WrongPassword',
+      });
+    assert.equal(res.status, 401);
+    assert.equal(res.body.success, false);
+  });
+
+  test('29. Controller Login: authenticates Anmol / Anmol26 and returns JWT', async () => {
+    const res = await request(app)
+      .post('/api/controller/login')
+      .send({
+        username: 'Anmol',
+        password: 'Anmol26',
+      });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.token);
+    assert.equal(res.body.user.username, 'Anmol');
+    assert.equal(res.body.user.role, 'controller');
+    // Ensure no password or hash is exposed
+    assert.equal(res.body.password, undefined);
+    assert.equal(res.body.passwordHash, undefined);
+    controllerToken = res.body.token;
+  });
+
+  test('30. Controller Status API: returns standardized state for all 5 hazards', async () => {
+    const res = await request(app).get('/api/controller/status');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.ok(res.body.hazards);
+    assert.ok(res.body.hazards.fire !== undefined);
+    assert.ok(res.body.hazards.water !== undefined);
+    assert.ok(res.body.hazards.tilt !== undefined);
+    assert.ok(res.body.hazards.earthquake !== undefined);
+    assert.ok(res.body.hazards.gas !== undefined);
+  });
+
+  test('31. Controller Hazard Activation: rejected without auth token', async () => {
+    const res = await request(app)
+      .post('/api/controller/hazard/activate')
+      .send({ hazard: 'fire' });
+    assert.equal(res.status, 401);
+    assert.equal(res.body.success, false);
+  });
+
+  test('32. Controller Hazard Activation: activates FIRE hazard and creates active Alert', async () => {
+    const res = await request(app)
+      .post('/api/controller/hazard/activate')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ hazard: 'fire' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.state.hazards.fire.isActive, true);
+
+    // Verify consolidated hazard status endpoint now includes manual fire
+    const statusRes = await request(app).get('/api/sensors/hazards');
+    assert.equal(statusRes.status, 200);
+    assert.equal(statusRes.body.hazards.fire.detected, true);
+  });
+
+  test('33. Multiple Simultaneous Hazards: activating GAS while FIRE is active keeps both active', async () => {
+    const res = await request(app)
+      .post('/api/controller/hazard/activate')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ hazard: 'gas' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.state.hazards.gas.isActive, true);
+    assert.equal(res.body.state.hazards.fire.isActive, true, 'FIRE must remain active when GAS is activated');
+    assert.ok(res.body.state.activeCount >= 2);
+  });
+
+  test('34. Activate all 5 hazards simultaneously', async () => {
+    await request(app)
+      .post('/api/controller/hazard/activate')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ hazard: 'water' });
+
+    await request(app)
+      .post('/api/controller/hazard/activate')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ hazard: 'tilt' });
+
+    const res = await request(app)
+      .post('/api/controller/hazard/activate')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ hazard: 'earthquake' });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.state.hazards.fire.isActive, true);
+    assert.equal(res.body.state.hazards.water.isActive, true);
+    assert.equal(res.body.state.hazards.tilt.isActive, true);
+    assert.equal(res.body.state.hazards.earthquake.isActive, true);
+    assert.equal(res.body.state.hazards.gas.isActive, true);
+    assert.equal(res.body.state.activeCount, 5);
+  });
+
+  test('35. Deactivate FIRE only: other 4 hazards remain active', async () => {
+    const res = await request(app)
+      .post('/api/controller/hazard/deactivate')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ hazard: 'fire' });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.state.hazards.fire.isActive, false);
+    assert.equal(res.body.state.hazards.water.isActive, true);
+    assert.equal(res.body.state.hazards.tilt.isActive, true);
+    assert.equal(res.body.state.hazards.earthquake.isActive, true);
+    assert.equal(res.body.state.hazards.gas.isActive, true);
+    assert.equal(res.body.state.activeCount, 4);
+  });
+
+  test('36. Clear All Manual Hazards: deactivates all manual alerts without clearing physical sensors', async () => {
+    const res = await request(app)
+      .post('/api/controller/hazard/clear-all')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send();
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.state.activeCount, 0);
+    assert.equal(res.body.state.hazards.fire.isActive, false);
+    assert.equal(res.body.state.hazards.water.isActive, false);
+    assert.equal(res.body.state.hazards.tilt.isActive, false);
+    assert.equal(res.body.state.hazards.earthquake.isActive, false);
+    assert.equal(res.body.state.hazards.gas.isActive, false);
+  });
 });

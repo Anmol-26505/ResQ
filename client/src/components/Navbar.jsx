@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ShieldAlert, Activity, Cpu, Menu, X, ArrowRight, User } from 'lucide-react';
+import { ShieldAlert, Activity, Cpu, Menu, X, ArrowRight, User, Sliders } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
@@ -54,7 +54,20 @@ const Navbar = () => {
           </div>
 
           {/* Right Action */}
-          <div className="hidden md:flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-2.5">
+            {/* Controllers Button (Dedicated remote hazard control panel) */}
+            <Link
+              to="/controller/login"
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold transition-all ${
+                location.pathname.startsWith('/controller')
+                  ? 'bg-rose-50 text-rose-700 border border-rose-300 shadow-sm'
+                  : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 shadow-sm'
+              }`}
+            >
+              <Sliders className="w-4 h-4 text-rose-600" />
+              <span>Controllers</span>
+            </Link>
+
             {isAuthenticated ? (
               <Link
                 to="/dashboard"
@@ -113,6 +126,14 @@ const Navbar = () => {
             </Link>
           ))}
           <div className="pt-3 border-t border-slate-200 flex flex-col gap-2">
+            <Link
+              to="/controller/login"
+              onClick={() => setIsOpen(false)}
+              className="w-full text-center px-4 py-2.5 bg-rose-50 text-rose-700 border border-rose-300 font-semibold rounded-lg flex items-center justify-center gap-2"
+            >
+              <Sliders className="w-4 h-4 text-rose-600" />
+              <span>Controllers (Hazard Control Panel)</span>
+            </Link>
             <Link
               to="/dashboard"
               onClick={() => setIsOpen(false)}

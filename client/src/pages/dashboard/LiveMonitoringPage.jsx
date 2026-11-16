@@ -26,7 +26,7 @@ const LiveMonitoringPage = () => {
   const [loading, setLoading] = useState(true);
   const [backendStatus, setBackendStatus] = useState('CHECKING...');
   const [lastSavedTimestamp, setLastSavedTimestamp] = useState(null);
-  const { latestReading, isConnected, simulationState } = useSocket();
+  const { latestReading, isConnected, simulationState, manualHazards = {} } = useSocket();
 
   // Load device list
   useEffect(() => {
@@ -189,11 +189,11 @@ const LiveMonitoringPage = () => {
 
   const isTempCritical = temp !== null && temp > 50;
   const isTempWarning = temp !== null && temp > 36;
-  const isGasCritical = (gas !== null && gas > 300) || (smoke !== null && smoke > 300);
+  const isGasCritical = (gas !== null && gas > 300) || (smoke !== null && smoke > 300) || Boolean(manualHazards.gas);
   const isGasWarning = (gas !== null && gas > 180) || (smoke !== null && smoke > 180);
-  const isFlameCritical = flame === true;
-  const isTiltCritical = tilt || earthquake || (vibration !== null && vibration > 0.22);
-  const isWaterCritical = Boolean(hasWaterSensor && (water || (waterLevel !== null && waterLevel > 40)));
+  const isFlameCritical = flame === true || Boolean(manualHazards.fire);
+  const isTiltCritical = tilt || earthquake || (vibration !== null && vibration > 0.22) || Boolean(manualHazards.tilt || manualHazards.earthquake);
+  const isWaterCritical = Boolean(hasWaterSensor && (water || (waterLevel !== null && waterLevel > 40))) || Boolean(manualHazards.water);
 
   if (loading) {
     return (

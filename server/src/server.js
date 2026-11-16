@@ -2,6 +2,7 @@ const http = require('http');
 const app = require('./app');
 const { connectDB, disconnectDB } = require('./config/db');
 const { initSocket, broadcastDeviceStatus } = require('./sockets/socketHandler');
+const { initManualHazards } = require('./services/manualHazardService');
 const Device = require('./models/Device');
 const { startSimulation } = require('./services/simulationService');
 const { seedData } = require('./utils/seed');
@@ -42,6 +43,9 @@ const startDeviceHeartbeatMonitor = () => {
 const startServer = async () => {
   try {
     await connectDB();
+
+    // Initialize remote manual hazards state from MongoDB
+    await initManualHazards();
 
     // Auto-seed if database is empty
     const deviceCount = await Device.countDocuments();
