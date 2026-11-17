@@ -741,4 +741,52 @@ describe('ResQ Backend API Suite', () => {
     assert.equal(res.body.state.hazards.earthquake.isActive, false);
     assert.equal(res.body.state.hazards.gas.isActive, false);
   });
+
+  test('37. Remote Controller Toggle: change device status between online and offline', async () => {
+    // Check initial status of RESQ-NODE-01 (default controller device)
+    const initialRes = await request(app).get('/api/controller/device-status?deviceId=RESQ-NODE-01');
+    assert.equal(initialRes.status, 200);
+    const wasOnline = Boolean(initialRes.body.isOnline);
+
+    // Toggle status
+    const toggleRes1 = await request(app)
+      .post('/api/controller/device/toggle-status')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ deviceId: 'RESQ-NODE-01' });
+
+    assert.equal(toggleRes1.status, 200);
+    assert.equal(toggleRes1.body.success, true);
+    assert.equal(toggleRes1.body.isOnline, !wasOnline);
+    assert.equal(toggleRes1.body.status, !wasOnline ? 'online' : 'offline');
+
+    // Verify GET /api/sensors/latest reflects the new status
+    const latestRes = await request(app).get('/api/sensors/latest?deviceId=RESQ-NODE-01');
+    assert.equal(latestRes.status, 200);
+    assert.equal(latestRes.body.isOnline, !wasOnline);
+    assert.equal(latestRes.body.deviceStatus, !wasOnline ? 'online' : 'offline');
+  });
+
+  test('38. Remote Controller Toggle: clicking again toggles device status back', async () => {
+    // Fetch state before second toggle
+    const currentRes = await request(app).get('/api/controller/device-status?deviceId=RESQ-NODE-01');
+    assert.equal(currentRes.status, 200);
+    const wasOnline = Boolean(currentRes.body.isOnline);
+
+    // Toggle status again (should flip back)
+    const toggleRes2 = await request(app)
+      .post('/api/controller/device/toggle-status')
+      .set('Authorization', `Bearer ${controllerToken}`)
+      .send({ deviceId: 'RESQ-NODE-01' });
+
+    assert.equal(toggleRes2.status, 200);
+    assert.equal(toggleRes2.body.success, true);
+    assert.equal(toggleRes2.body.isOnline, !wasOnline);
+    assert.equal(toggleRes2.body.status, !wasOnline ? 'online' : 'offline');
+
+    // Verify GET /api/sensors/latest reflects the flipped status
+    const latestRes = await request(app).get('/api/sensors/latest?deviceId=RESQ-NODE-01');
+    assert.equal(latestRes.status, 200);
+    assert.equal(latestRes.body.isOnline, !wasOnline);
+    assert.equal(latestRes.body.deviceStatus, !wasOnline ? 'online' : 'offline');
+  });
 });

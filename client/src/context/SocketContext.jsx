@@ -23,6 +23,7 @@ export const SocketProvider = ({ children }) => {
   const [manualHazardDetails, setManualHazardDetails] = useState({});
   const [manualActiveCount, setManualActiveCount] = useState(0);
   const [manualLastUpdated, setManualLastUpdated] = useState(null);
+  const [controllerDeviceOnline, setControllerDeviceOnline] = useState(false);
 
   useEffect(() => {
     const socket = getSocket();
@@ -46,6 +47,9 @@ export const SocketProvider = ({ children }) => {
           ...prev,
           [statusData.deviceId]: statusData,
         }));
+        if (statusData.deviceId === 'RESQ-NODE-01' || !statusData.deviceId) {
+          setControllerDeviceOnline(statusData.status === 'online' || statusData.isOnline === true);
+        }
       }
     };
 
@@ -125,9 +129,22 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
 
+  // Fetch initial controller device connection status
+  const refreshControllerDeviceStatus = useCallback(async () => {
+    try {
+      const res = await api.get('/controller/device-status');
+      if (res.data?.success) {
+        setControllerDeviceOnline(Boolean(res.data.isOnline));
+      }
+    } catch (e) {
+      // Non-fatal fallback
+    }
+  }, []);
+
   useEffect(() => {
     refreshManualHazards();
-  }, [refreshManualHazards]);
+    refreshControllerDeviceStatus();
+  }, [refreshManualHazards, refreshControllerDeviceStatus]);
 
   const subscribeDevice = (deviceId) => {
     const socket = getSocket();
@@ -154,7 +171,10 @@ export const SocketProvider = ({ children }) => {
     manualHazardDetails,
     manualActiveCount,
     manualLastUpdated,
+    controllerDeviceOnline,
+    setControllerDeviceOnline,
     refreshManualHazards,
+    refreshControllerDeviceStatus,
     subscribeDevice,
     unsubscribeDevice,
   };

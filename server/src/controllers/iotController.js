@@ -366,7 +366,7 @@ const getLatestReadings = async (req, res, next) => {
 
     const { deviceId } = req.query;
 
-    const devices = await Device.find({}).select('deviceId name status lastSeenAt latestReading location supportedSensors');
+    const devices = await Device.find({}).select('deviceId name status manualStatusOverride lastSeenAt latestReading location supportedSensors');
 
     if (deviceId) {
       const devUpper = deviceId.toUpperCase();
@@ -381,14 +381,25 @@ const getLatestReadings = async (req, res, next) => {
         const nowMsNR = Date.now();
         const lsNR = device?.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
         const secsNR = lsNR > 0 ? Math.floor((nowMsNR - lsNR) / 1000) : null;
-        const statusNR = secsNR === null ? 'unknown' : (secsNR < 30 ? 'online' : 'offline');
+        let statusNR = 'unknown';
+        if (device?.manualStatusOverride === 'online') {
+          statusNR = 'online';
+        } else if (device?.manualStatusOverride === 'offline') {
+          statusNR = 'offline';
+        } else if (secsNR === null) {
+          statusNR = 'unknown';
+        } else if (secsNR < 30) {
+          statusNR = 'online';
+        } else {
+          statusNR = 'offline';
+        }
         return res.json({
           success: true,
           message: 'No sensor readings found in database',
           deviceId: devUpper,
           deviceStatus: statusNR,
           lastSeenAt: device ? device.lastSeenAt : null,
-          secondsSinceLastSeen: secsNR,
+          secondsSinceLastSeen: device?.manualStatusOverride === 'online' ? 0 : secsNR,
           isOnline: statusNR === 'online',
           latestReading: null,
           reading: null,
@@ -400,14 +411,25 @@ const getLatestReadings = async (req, res, next) => {
           devices: devices.map((d) => {
             const dLsMs = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
             const dSecs = dLsMs > 0 ? Math.floor((nowMsNR - dLsMs) / 1000) : null;
-            const dStat = dSecs === null ? 'unknown' : (dSecs < 30 ? 'online' : 'offline');
+            let dStat = 'unknown';
+            if (d.manualStatusOverride === 'online') {
+              dStat = 'online';
+            } else if (d.manualStatusOverride === 'offline') {
+              dStat = 'offline';
+            } else if (dSecs === null) {
+              dStat = 'unknown';
+            } else if (dSecs < 30) {
+              dStat = 'online';
+            } else {
+              dStat = 'offline';
+            }
             return {
               deviceId: d.deviceId,
               name: d.name,
               status: dStat,
               location: d.location,
               lastSeenAt: d.lastSeenAt,
-              secondsSinceLastSeen: dSecs,
+              secondsSinceLastSeen: d.manualStatusOverride === 'online' ? 0 : dSecs,
               isOnline: dStat === 'online',
               latestReading: d.latestReading,
               supportedSensors: d.supportedSensors,
@@ -422,7 +444,11 @@ const getLatestReadings = async (req, res, next) => {
       const lastSeenMs = device?.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
       const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
       let liveDeviceStatus = 'unknown';
-      if (secondsSinceLastSeen === null) {
+      if (device?.manualStatusOverride === 'online') {
+        liveDeviceStatus = 'online';
+      } else if (device?.manualStatusOverride === 'offline') {
+        liveDeviceStatus = 'offline';
+      } else if (secondsSinceLastSeen === null) {
         liveDeviceStatus = 'unknown';
       } else if (secondsSinceLastSeen < 30) {
         liveDeviceStatus = 'online';
@@ -435,7 +461,7 @@ const getLatestReadings = async (req, res, next) => {
         deviceId: devUpper,
         deviceStatus: liveDeviceStatus,
         lastSeenAt: device ? device.lastSeenAt : null,
-        secondsSinceLastSeen,
+        secondsSinceLastSeen: device?.manualStatusOverride === 'online' ? 0 : secondsSinceLastSeen,
         isOnline: liveDeviceStatus === 'online',
         latestReading: activeReading,
         reading: activeReading,
@@ -447,14 +473,25 @@ const getLatestReadings = async (req, res, next) => {
         devices: devices.map((d) => {
           const dLastSeenMs = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
           const dSecsSince = dLastSeenMs > 0 ? Math.floor((nowMs - dLastSeenMs) / 1000) : null;
-          const dLiveStatus = dSecsSince === null ? 'unknown' : (dSecsSince < 30 ? 'online' : 'offline');
+          let dLiveStatus = 'unknown';
+          if (d.manualStatusOverride === 'online') {
+            dLiveStatus = 'online';
+          } else if (d.manualStatusOverride === 'offline') {
+            dLiveStatus = 'offline';
+          } else if (dSecsSince === null) {
+            dLiveStatus = 'unknown';
+          } else if (dSecsSince < 30) {
+            dLiveStatus = 'online';
+          } else {
+            dLiveStatus = 'offline';
+          }
           return {
             deviceId: d.deviceId,
             name: d.name,
             status: dLiveStatus,
             location: d.location,
             lastSeenAt: d.lastSeenAt,
-            secondsSinceLastSeen: dSecsSince,
+            secondsSinceLastSeen: d.manualStatusOverride === 'online' ? 0 : dSecsSince,
             isOnline: dLiveStatus === 'online',
             latestReading: d.latestReading,
             supportedSensors: d.supportedSensors,
@@ -476,10 +513,29 @@ const getLatestReadings = async (req, res, next) => {
 
     // Compute live status for all devices from lastSeenAt freshness
     const nowMsAll = Date.now();
+    const pLsMs = primaryDevice?.lastSeenAt ? new Date(primaryDevice.lastSeenAt).getTime() : 0;
+    const pSecs = pLsMs > 0 ? Math.floor((nowMsAll - pLsMs) / 1000) : null;
+    let pStatus = 'unknown';
+    if (primaryDevice?.manualStatusOverride === 'online') {
+      pStatus = 'online';
+    } else if (primaryDevice?.manualStatusOverride === 'offline') {
+      pStatus = 'offline';
+    } else if (pSecs === null) {
+      pStatus = 'unknown';
+    } else if (pSecs < 30) {
+      pStatus = 'online';
+    } else {
+      pStatus = 'offline';
+    }
 
     res.json({
       success: true,
       count: devices.length,
+      deviceId: primaryDevice?.deviceId || 'RESQ-NODE-01',
+      deviceStatus: pStatus,
+      isOnline: pStatus === 'online',
+      secondsSinceLastSeen: primaryDevice?.manualStatusOverride === 'online' ? 0 : pSecs,
+      lastSeenAt: primaryDevice?.lastSeenAt || null,
       latestReading: activeReading,
       reading: activeReading,
       sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
@@ -490,14 +546,25 @@ const getLatestReadings = async (req, res, next) => {
       devices: devices.map((d) => {
         const dLsMs = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
         const dSecs = dLsMs > 0 ? Math.floor((nowMsAll - dLsMs) / 1000) : null;
-        const dStat = dSecs === null ? 'unknown' : (dSecs < 30 ? 'online' : 'offline');
+        let dStat = 'unknown';
+        if (d.manualStatusOverride === 'online') {
+          dStat = 'online';
+        } else if (d.manualStatusOverride === 'offline') {
+          dStat = 'offline';
+        } else if (dSecs === null) {
+          dStat = 'unknown';
+        } else if (dSecs < 30) {
+          dStat = 'online';
+        } else {
+          dStat = 'offline';
+        }
         return {
           deviceId: d.deviceId,
           name: d.name,
           status: dStat,
           location: d.location,
           lastSeenAt: d.lastSeenAt,
-          secondsSinceLastSeen: dSecs,
+          secondsSinceLastSeen: d.manualStatusOverride === 'online' ? 0 : dSecs,
           isOnline: dStat === 'online',
           latestReading: d.latestReading,
           supportedSensors: d.supportedSensors,

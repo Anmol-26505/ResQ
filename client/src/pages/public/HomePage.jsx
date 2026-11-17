@@ -51,7 +51,28 @@ const HomePage = () => {
     recentAlerts,
     manualHazards = {},
     manualHazardDetails = {},
+    controllerDeviceOnline,
+    deviceStatuses,
   } = useSocket();
+
+  // Instant response to controller device status toggles and socket status updates
+  useEffect(() => {
+    if (typeof controllerDeviceOnline === 'boolean') {
+      setDeviceApiOnline(controllerDeviceOnline);
+    }
+  }, [controllerDeviceOnline]);
+
+  useEffect(() => {
+    const devId = selectedDeviceId || 'RESQ-NODE-01';
+    const statusObj = deviceStatuses?.[devId];
+    if (statusObj) {
+      if (statusObj.status === 'online' || statusObj.isOnline === true) {
+        setDeviceApiOnline(true);
+      } else if (statusObj.status === 'offline' || statusObj.isOnline === false) {
+        setDeviceApiOnline(false);
+      }
+    }
+  }, [deviceStatuses, selectedDeviceId]);
 
   // Load initial devices and recent telemetry
   useEffect(() => {
@@ -245,6 +266,12 @@ const HomePage = () => {
   } else if (backendStatus === 'OFFLINE') {
     deviceConnectionStatus = 'OFFLINE';
     dataFreshness = 'OFFLINE';
+  } else if (deviceApiOnline === false) {
+    deviceConnectionStatus = 'OFFLINE';
+    dataFreshness = 'OFFLINE';
+  } else if (deviceApiOnline === true) {
+    deviceConnectionStatus = 'CONNECTED';
+    dataFreshness = isFresh ? 'CONNECTED' : (isStale ? 'DATA STALE' : 'CONNECTED');
   } else if (readingTime === 0) {
     deviceConnectionStatus = 'WAITING FOR DATA';
     dataFreshness = 'WAITING FOR DATA';
@@ -277,9 +304,8 @@ const HomePage = () => {
   const waterLevel = hasWaterSensor && currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : null;
   const distance = currentData.distance !== undefined && currentData.distance !== null && currentData.distance > 0 ? currentData.distance : null;
 
-  // isDeviceOnline: use backend-computed live status (secondsSinceLastSeen < 30)
-  // NEVER use stale DB status field — it stays 'online' even after hours of silence
-  const isDeviceOnline = deviceApiOnline === true || isFresh;
+  // isDeviceOnline: explicit online/offline derived from controller/API/heartbeat
+  const isDeviceOnline = deviceApiOnline === true || (deviceApiOnline === null && isFresh);
   const lastTimestamp = readingTime > 0
     ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : 'Awaiting live stream';

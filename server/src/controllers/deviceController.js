@@ -238,7 +238,11 @@ const getDeviceStatus = async (req, res, next) => {
     const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
 
     let status = 'unknown';
-    if (secondsSinceLastSeen === null) {
+    if (device.manualStatusOverride === 'online') {
+      status = 'online';
+    } else if (device.manualStatusOverride === 'offline') {
+      status = 'offline';
+    } else if (secondsSinceLastSeen === null) {
       status = 'unknown';
     } else if (secondsSinceLastSeen < 30) {
       status = 'online';
@@ -253,7 +257,7 @@ const getDeviceStatus = async (req, res, next) => {
       status,
       isOnline: status === 'online',
       lastSeenAt: device.lastSeenAt,
-      secondsSinceLastSeen,
+      secondsSinceLastSeen: device.manualStatusOverride === 'online' ? 0 : secondsSinceLastSeen,
       location: device.location,
     });
   } catch (error) {

@@ -19,6 +19,8 @@ import {
   User,
   X,
   Volume2,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import api from '../../services/api';
 import { useSocket } from '../../context/SocketContext';
@@ -88,13 +90,28 @@ const HAZARDS = [
 
 const ControllerDashboardPage = () => {
   const navigate = useNavigate();
-  const { isConnected, manualHazards, manualHazardDetails, manualActiveCount, manualLastUpdated, refreshManualHazards } = useSocket();
+  const {
+    isConnected,
+    manualHazards,
+    manualHazardDetails,
+    manualActiveCount,
+    manualLastUpdated,
+    refreshManualHazards,
+    controllerDeviceOnline,
+    setControllerDeviceOnline,
+    refreshControllerDeviceStatus,
+  } = useSocket();
 
   const [togglingHazard, setTogglingHazard] = useState(null);
+  const [togglingDevice, setTogglingDevice] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
   const [currentUser, setCurrentUser] = useState('Anmol');
+
+  useEffect(() => {
+    refreshControllerDeviceStatus?.();
+  }, [refreshControllerDeviceStatus]);
 
   useEffect(() => {
     try {
@@ -113,6 +130,29 @@ const ControllerDashboardPage = () => {
     setTimeout(() => {
       setToastMessage(null);
     }, 4000);
+  };
+
+  const handleToggleDeviceStatus = async () => {
+    try {
+      setTogglingDevice(true);
+      const res = await api.post('/controller/device/toggle-status', {
+        deviceId: 'RESQ-NODE-01',
+      });
+      if (res.data?.success) {
+        const isNowOnline = Boolean(res.data.isOnline);
+        setControllerDeviceOnline(isNowOnline);
+        showToast(
+          `Device status changed to ${isNowOnline ? 'CONNECTED (ONLINE)' : 'OFFLINE'}. Real-time update broadcasted!`,
+          isNowOnline ? 'success' : 'info'
+        );
+      }
+    } catch (err) {
+      console.error('Error toggling device status:', err);
+      const msg = err.response?.data?.message || err.message || 'Failed to toggle device status';
+      showToast(`Error: ${msg}`, 'error');
+    } finally {
+      setTogglingDevice(false);
+    }
   };
 
   const handleToggleHazard = async (hazardId) => {
@@ -261,6 +301,82 @@ const ControllerDashboardPage = () => {
 
       {/* Main Controller Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1 space-y-6">
+        {/* Device Hardware Connection Controller Card */}
+        <div
+          className={`border rounded-3xl p-5 sm:p-6 shadow-xl transition-all ${
+            controllerDeviceOnline
+              ? 'bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border-emerald-500/50 shadow-emerald-950/20'
+              : 'bg-slate-900 border-slate-800'
+          }`}
+        >
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
+            <div className="flex items-start sm:items-center gap-4">
+              <div
+                className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all flex-shrink-0 ${
+                  controllerDeviceOnline
+                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 animate-pulse'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}
+              >
+                {controllerDeviceOnline ? <Wifi className="w-7 h-7" /> : <WifiOff className="w-7 h-7" />}
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                    Device Connection Status
+                  </h3>
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+                      controllerDeviceOnline
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-600 shadow-sm'
+                        : 'bg-rose-950 text-rose-300 border border-rose-800 shadow-sm'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        controllerDeviceOnline ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'
+                      }`}
+                    />
+                    <span>{controllerDeviceOnline ? 'CONNECTED (ONLINE)' : 'DEVICE OFFLINE'}</span>
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Target Device: <span className="font-mono text-slate-200 font-semibold">RESQ-NODE-01</span>.
+                  Click the button below to switch the device status between CONNECTED and OFFLINE for all visitors.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle Status Action Button */}
+            <button
+              onClick={handleToggleDeviceStatus}
+              disabled={togglingDevice}
+              className={`w-full md:w-auto px-6 py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg transition-all flex items-center justify-center gap-2.5 ${
+                controllerDeviceOnline
+                  ? 'bg-rose-950 hover:bg-rose-900 border-2 border-rose-600 text-rose-200 hover:text-white shadow-rose-950/50 active:scale-95'
+                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-950/40 active:scale-95'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {togglingDevice ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                  <span>Switching Status...</span>
+                </>
+              ) : controllerDeviceOnline ? (
+                <>
+                  <WifiOff className="w-4 h-4 text-rose-300" />
+                  <span>Set Device to OFFLINE</span>
+                </>
+              ) : (
+                <>
+                  <Wifi className="w-4 h-4 text-emerald-200" />
+                  <span>Set Device to CONNECTED</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Status Summary & Master Clear Bar */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1">

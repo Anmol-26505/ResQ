@@ -21,9 +21,10 @@ const startDeviceHeartbeatMonitor = () => {
     try {
       const cutoffTime = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
 
-      // Find online devices that haven't sent a telemetry ping since cutoff
+      // Find online devices that haven't sent a telemetry ping since cutoff (exclude manually held online status)
       const staleDevices = await Device.find({
         status: 'online',
+        manualStatusOverride: { $ne: 'online' },
         lastSeenAt: { $lt: cutoffTime },
       });
 

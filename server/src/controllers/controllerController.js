@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const Device = require('../models/Device');
+const { broadcastDeviceStatus } = require('../sockets/socketHandler');
 const {
   getPublicHazardState,
   activateHazard: activateHazardService,
@@ -202,6 +204,149 @@ const clearAllHazards = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get current device connection status for controller
+ * @route   GET /api/controller/device-status
+ * @access  Public
+ */
+const getControllerDeviceStatus = async (req, res) => {
+  try {
+    const deviceId = (req.query.deviceId || 'RESQ-NODE-01').toUpperCase();
+    let device = await Device.findOne({ deviceId });
+    if (!device) {
+      // Check if primary hardware device exists under another id, or create standard device
+      const anyDevice = await Device.findOne({});
+      if (anyDevice && !req.query.deviceId) {
+        device = anyDevice;
+      } else {
+        device = await Device.create({
+          deviceId,
+          name: `${deviceId} ESP8266 NodeMCU`,
+          apiKey: `resq-hardware-${deviceId.toLowerCase()}`,
+          location: 'Facility Alpha',
+          status: 'offline',
+          manualStatusOverride: null,
+        });
+      }
+    }
+
+    const nowMs = Date.now();
+    const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+    const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
+
+    let isOnline = false;
+    let status = 'offline';
+
+    if (device.manualStatusOverride === 'online') {
+      isOnline = true;
+      status = 'online';
+    } else if (device.manualStatusOverride === 'offline') {
+      isOnline = false;
+      status = 'offline';
+    } else if (secondsSinceLastSeen !== null && secondsSinceLastSeen < 30) {
+      isOnline = true;
+      status = 'online';
+    } else {
+      isOnline = false;
+      status = 'offline';
+    }
+
+    return res.status(200).json({
+      success: true,
+      deviceId: device.deviceId,
+      name: device.name,
+      status,
+      isOnline,
+      manualStatusOverride: device.manualStatusOverride || null,
+      lastSeenAt: device.lastSeenAt,
+      secondsSinceLastSeen: device.manualStatusOverride === 'online' ? 0 : secondsSinceLastSeen,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve controller device status',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Toggle device connection status between connected (online) and offline
+ * @route   POST /api/controller/device/toggle-status
+ * @access  Protected (Controller only)
+ */
+const toggleDeviceStatus = async (req, res) => {
+  try {
+    const targetDeviceId = (req.body.deviceId || 'RESQ-NODE-01').toUpperCase();
+    let device = await Device.findOne({ deviceId: targetDeviceId });
+    if (!device) {
+      // If no explicit deviceId was passed in body, fallback to existing device
+      if (!req.body.deviceId) {
+        device = await Device.findOne({});
+      }
+    }
+
+    if (!device) {
+      device = await Device.create({
+        deviceId: targetDeviceId,
+        name: `${targetDeviceId} ESP8266 NodeMCU`,
+        apiKey: `resq-hardware-${targetDeviceId.toLowerCase()}`,
+        location: 'Facility Alpha',
+        status: 'offline',
+        manualStatusOverride: null,
+      });
+    }
+
+    const nowMs = Date.now();
+    const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+    const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
+
+    let currentlyOnline = false;
+    if (device.manualStatusOverride === 'online') {
+      currentlyOnline = true;
+    } else if (device.manualStatusOverride === 'offline') {
+      currentlyOnline = false;
+    } else if (secondsSinceLastSeen !== null && secondsSinceLastSeen < 30) {
+      currentlyOnline = true;
+    } else if (device.status === 'online') {
+      currentlyOnline = true;
+    }
+
+    let newStatus;
+    if (req.body.status && ['online', 'offline', 'connected'].includes(req.body.status.toLowerCase())) {
+      newStatus = req.body.status.toLowerCase() === 'connected' ? 'online' : req.body.status.toLowerCase();
+    } else {
+      newStatus = currentlyOnline ? 'offline' : 'online';
+    }
+
+    device.manualStatusOverride = newStatus;
+    device.status = newStatus;
+    if (newStatus === 'online') {
+      device.lastSeenAt = new Date();
+    }
+    await device.save();
+
+    // Broadcast device status update to all connected clients via Socket.IO
+    broadcastDeviceStatus(device);
+
+    return res.status(200).json({
+      success: true,
+      message: `Device status changed to ${newStatus === 'online' ? 'CONNECTED' : 'OFFLINE'}`,
+      deviceId: device.deviceId,
+      status: newStatus,
+      isOnline: newStatus === 'online',
+      manualStatusOverride: device.manualStatusOverride,
+      lastSeenAt: device.lastSeenAt,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to toggle device status',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   controllerLogin,
   controllerLogout,
@@ -209,4 +354,6 @@ module.exports = {
   activateHazard,
   deactivateHazard,
   clearAllHazards,
+  getControllerDeviceStatus,
+  toggleDeviceStatus,
 };

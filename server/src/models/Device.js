@@ -44,6 +44,12 @@ const deviceSchema = new mongoose.Schema(
       default: 'offline',
       index: true,
     },
+    manualStatusOverride: {
+      type: String,
+      enum: ['online', 'offline', null],
+      default: null,
+      index: true,
+    },
     lastSeenAt: {
       type: Date,
       default: null,

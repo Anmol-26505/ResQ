@@ -26,7 +26,26 @@ const LiveMonitoringPage = () => {
   const [loading, setLoading] = useState(true);
   const [backendStatus, setBackendStatus] = useState('CHECKING...');
   const [lastSavedTimestamp, setLastSavedTimestamp] = useState(null);
-  const { latestReading, isConnected, simulationState, manualHazards = {} } = useSocket();
+  const [deviceApiOnline, setDeviceApiOnline] = useState(null);
+  const { latestReading, isConnected, simulationState, manualHazards = {}, controllerDeviceOnline, deviceStatuses } = useSocket();
+
+  useEffect(() => {
+    if (typeof controllerDeviceOnline === 'boolean') {
+      setDeviceApiOnline(controllerDeviceOnline);
+    }
+  }, [controllerDeviceOnline]);
+
+  useEffect(() => {
+    const devId = selectedDeviceId || 'RESQ-NODE-01';
+    const statusObj = deviceStatuses?.[devId];
+    if (statusObj) {
+      if (statusObj.status === 'online' || statusObj.isOnline === true) {
+        setDeviceApiOnline(true);
+      } else if (statusObj.status === 'offline' || statusObj.isOnline === false) {
+        setDeviceApiOnline(false);
+      }
+    }
+  }, [deviceStatuses, selectedDeviceId]);
 
   // Load device list
   useEffect(() => {
@@ -103,6 +122,13 @@ const LiveMonitoringPage = () => {
           if (res.data.lastSavedAt) {
             setLastSavedTimestamp(res.data.lastSavedAt);
           }
+          if (res.data.isOnline !== undefined) {
+            setDeviceApiOnline(Boolean(res.data.isOnline));
+          } else if (res.data.deviceStatus === 'online') {
+            setDeviceApiOnline(true);
+          } else if (res.data.deviceStatus === 'offline') {
+            setDeviceApiOnline(false);
+          }
           const fresh = res.data.latestReading || res.data.reading;
           if (fresh && (!selectedDeviceId || fresh.deviceId === selectedDeviceId)) {
             setTelemetryHistory((prev) => {
@@ -157,6 +183,12 @@ const LiveMonitoringPage = () => {
   } else if (backendStatus === 'OFFLINE') {
     deviceConnectionStatus = 'OFFLINE';
     dataFreshness = 'OFFLINE';
+  } else if (deviceApiOnline === false) {
+    deviceConnectionStatus = 'OFFLINE';
+    dataFreshness = 'OFFLINE';
+  } else if (deviceApiOnline === true) {
+    deviceConnectionStatus = 'CONNECTED';
+    dataFreshness = isFresh ? 'CONNECTED' : (isStale ? 'DATA STALE' : 'CONNECTED');
   } else if (readingTime === 0) {
     deviceConnectionStatus = 'WAITING FOR DATA';
     dataFreshness = 'WAITING FOR DATA';
