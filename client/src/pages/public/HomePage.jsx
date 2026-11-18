@@ -85,7 +85,11 @@ const HomePage = () => {
 
         if (devRes.data?.success && devRes.data.devices.length > 0) {
           setDevices(devRes.data.devices);
-          const firstId = devRes.data.devices[0].deviceId;
+          const primaryDev =
+            devRes.data.devices.find((d) => d.manualStatusOverride === 'online') ||
+            devRes.data.devices.find((d) => d.deviceId === 'RESQ-NODE-01') ||
+            devRes.data.devices[0];
+          const firstId = primaryDev.deviceId;
           setSelectedDeviceId(firstId);
 
           try {
@@ -163,8 +167,12 @@ const HomePage = () => {
             setLastSavedTimestamp(sensorRes.data.lastSavedAt);
           }
 
-          // Use backend-computed isOnline / secondsSinceLastSeen (never trust stale DB status field)
-          if (sensorRes.data.isOnline !== undefined) {
+          // If manual controller override is active, respect manual connection state
+          if (sensorRes.data.manualStatusOverride === 'online' || controllerDeviceOnline === true) {
+            setDeviceApiOnline(true);
+          } else if (sensorRes.data.manualStatusOverride === 'offline' || controllerDeviceOnline === false) {
+            setDeviceApiOnline(false);
+          } else if (sensorRes.data.isOnline !== undefined) {
             setDeviceApiOnline(Boolean(sensorRes.data.isOnline));
           } else if (sensorRes.data.deviceStatus === 'online') {
             setDeviceApiOnline(true);
@@ -190,7 +198,11 @@ const HomePage = () => {
           if (sensorRes.data.devices && sensorRes.data.devices.length > 0) {
             setDevices(sensorRes.data.devices);
             if (!selectedDeviceId) {
-              setSelectedDeviceId(sensorRes.data.devices[0].deviceId);
+              const primaryDev =
+                sensorRes.data.devices.find((d) => d.manualStatusOverride === 'online') ||
+                sensorRes.data.devices.find((d) => d.deviceId === 'RESQ-NODE-01') ||
+                sensorRes.data.devices[0];
+              setSelectedDeviceId(primaryDev.deviceId);
             }
           }
         } else {
@@ -271,7 +283,7 @@ const HomePage = () => {
     dataFreshness = 'OFFLINE';
   } else if (deviceApiOnline === true) {
     deviceConnectionStatus = 'CONNECTED';
-    dataFreshness = isFresh ? 'CONNECTED' : (isStale ? 'DATA STALE' : 'CONNECTED');
+    dataFreshness = 'CONNECTED';
   } else if (readingTime === 0) {
     deviceConnectionStatus = 'WAITING FOR DATA';
     dataFreshness = 'WAITING FOR DATA';

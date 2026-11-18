@@ -370,10 +370,14 @@ const getLatestReadings = async (req, res, next) => {
 
     if (deviceId) {
       const devUpper = deviceId.toUpperCase();
-      const [latest, device] = await Promise.all([
+      let [latest, device] = await Promise.all([
         SensorReading.findOne({ deviceId: devUpper }).sort({ timestamp: -1, _id: -1 }),
         Device.findOne({ deviceId: devUpper }),
       ]);
+
+      if (!device) {
+        device = (await Device.findOne({ manualStatusOverride: 'online' })) || (await Device.findOne({}));
+      }
 
       const activeReading = latest || device?.latestReading || null;
 
@@ -463,6 +467,7 @@ const getLatestReadings = async (req, res, next) => {
         lastSeenAt: device ? device.lastSeenAt : null,
         secondsSinceLastSeen: device?.manualStatusOverride === 'online' ? 0 : secondsSinceLastSeen,
         isOnline: liveDeviceStatus === 'online',
+        manualStatusOverride: device?.manualStatusOverride || null,
         latestReading: activeReading,
         reading: activeReading,
         sequenceNumber: activeReading?.seq || activeReading?.sequenceNumber || 0,
@@ -534,6 +539,7 @@ const getLatestReadings = async (req, res, next) => {
       deviceId: primaryDevice?.deviceId || 'RESQ-NODE-01',
       deviceStatus: pStatus,
       isOnline: pStatus === 'online',
+      manualStatusOverride: primaryDevice?.manualStatusOverride || null,
       secondsSinceLastSeen: primaryDevice?.manualStatusOverride === 'online' ? 0 : pSecs,
       lastSeenAt: primaryDevice?.lastSeenAt || null,
       latestReading: activeReading,

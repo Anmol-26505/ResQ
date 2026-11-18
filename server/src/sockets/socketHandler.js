@@ -89,6 +89,8 @@ const broadcastDeviceStatus = (device) => {
   io.emit('device:status', {
     deviceId: device.deviceId,
     status: device.status,
+    isOnline: device.status === 'online' || device.manualStatusOverride === 'online',
+    manualStatusOverride: device.manualStatusOverride || null,
     lastSeenAt: device.lastSeenAt,
     latestReading: device.latestReading,
   });

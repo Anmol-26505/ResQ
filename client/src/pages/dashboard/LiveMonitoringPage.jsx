@@ -54,10 +54,14 @@ const LiveMonitoringPage = () => {
         const res = await api.get('/devices');
         if (res.data?.success && res.data.devices.length > 0) {
           setDevices(res.data.devices);
-          setSelectedDeviceId(res.data.devices[0].deviceId);
+          const primaryDev =
+            res.data.devices.find((d) => d.manualStatusOverride === 'online') ||
+            res.data.devices.find((d) => d.deviceId === 'RESQ-NODE-01') ||
+            res.data.devices[0];
+          setSelectedDeviceId(primaryDev.deviceId);
 
           // Fetch recent readings for primary device
-          const readingsRes = await api.get(`/iot/devices/${res.data.devices[0].deviceId}/readings?limit=20`);
+          const readingsRes = await api.get(`/iot/devices/${primaryDev.deviceId}/readings?limit=20`);
           if (readingsRes.data?.success) {
             setTelemetryHistory(readingsRes.data.readings);
           }
@@ -122,7 +126,11 @@ const LiveMonitoringPage = () => {
           if (res.data.lastSavedAt) {
             setLastSavedTimestamp(res.data.lastSavedAt);
           }
-          if (res.data.isOnline !== undefined) {
+          if (res.data.manualStatusOverride === 'online' || controllerDeviceOnline === true) {
+            setDeviceApiOnline(true);
+          } else if (res.data.manualStatusOverride === 'offline' || controllerDeviceOnline === false) {
+            setDeviceApiOnline(false);
+          } else if (res.data.isOnline !== undefined) {
             setDeviceApiOnline(Boolean(res.data.isOnline));
           } else if (res.data.deviceStatus === 'online') {
             setDeviceApiOnline(true);
@@ -188,7 +196,7 @@ const LiveMonitoringPage = () => {
     dataFreshness = 'OFFLINE';
   } else if (deviceApiOnline === true) {
     deviceConnectionStatus = 'CONNECTED';
-    dataFreshness = isFresh ? 'CONNECTED' : (isStale ? 'DATA STALE' : 'CONNECTED');
+    dataFreshness = 'CONNECTED';
   } else if (readingTime === 0) {
     deviceConnectionStatus = 'WAITING FOR DATA';
     dataFreshness = 'WAITING FOR DATA';

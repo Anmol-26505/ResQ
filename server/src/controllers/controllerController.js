@@ -213,22 +213,20 @@ const getControllerDeviceStatus = async (req, res) => {
   try {
     const deviceId = (req.query.deviceId || 'RESQ-NODE-01').toUpperCase();
     let device = await Device.findOne({ deviceId });
+
     if (!device) {
-      // Check if primary hardware device exists under another id, or create standard device
-      const anyDevice = await Device.findOne({});
-      if (anyDevice && !req.query.deviceId) {
-        device = anyDevice;
-      } else {
-        device = await Device.create({
-          deviceId,
-          name: `${deviceId} ESP8266 NodeMCU`,
-          apiKey: `resq-hardware-${deviceId.toLowerCase()}`,
-          location: 'Facility Alpha',
-          status: 'offline',
-          manualStatusOverride: null,
-        });
-      }
+      device = await Device.create({
+        deviceId,
+        name: `${deviceId} ESP8266 NodeMCU`,
+        apiKey: `resq-hardware-${deviceId.toLowerCase()}`,
+        location: 'Facility Alpha',
+        status: 'offline',
+        manualStatusOverride: null,
+      });
     }
+
+    const anyManuallyOnline = await Device.findOne({ manualStatusOverride: 'online' });
+    const anyManuallyOffline = await Device.findOne({ manualStatusOverride: 'offline' });
 
     const nowMs = Date.now();
     const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
@@ -237,10 +235,10 @@ const getControllerDeviceStatus = async (req, res) => {
     let isOnline = false;
     let status = 'offline';
 
-    if (device.manualStatusOverride === 'online') {
+    if (device.manualStatusOverride === 'online' || anyManuallyOnline) {
       isOnline = true;
       status = 'online';
-    } else if (device.manualStatusOverride === 'offline') {
+    } else if (device.manualStatusOverride === 'offline' || anyManuallyOffline) {
       isOnline = false;
       status = 'offline';
     } else if (secondsSinceLastSeen !== null && secondsSinceLastSeen < 30) {
@@ -257,9 +255,9 @@ const getControllerDeviceStatus = async (req, res) => {
       name: device.name,
       status,
       isOnline,
-      manualStatusOverride: device.manualStatusOverride || null,
+      manualStatusOverride: device.manualStatusOverride || (anyManuallyOnline ? 'online' : null),
       lastSeenAt: device.lastSeenAt,
-      secondsSinceLastSeen: device.manualStatusOverride === 'online' ? 0 : secondsSinceLastSeen,
+      secondsSinceLastSeen: (device.manualStatusOverride === 'online' || anyManuallyOnline) ? 0 : secondsSinceLastSeen,
     });
   } catch (error) {
     return res.status(500).json({
@@ -279,12 +277,6 @@ const toggleDeviceStatus = async (req, res) => {
   try {
     const targetDeviceId = (req.body.deviceId || 'RESQ-NODE-01').toUpperCase();
     let device = await Device.findOne({ deviceId: targetDeviceId });
-    if (!device) {
-      // If no explicit deviceId was passed in body, fallback to existing device
-      if (!req.body.deviceId) {
-        device = await Device.findOne({});
-      }
-    }
 
     if (!device) {
       device = await Device.create({
@@ -297,14 +289,17 @@ const toggleDeviceStatus = async (req, res) => {
       });
     }
 
+    const anyManuallyOnline = await Device.findOne({ manualStatusOverride: 'online' });
+    const anyManuallyOffline = await Device.findOne({ manualStatusOverride: 'offline' });
+
     const nowMs = Date.now();
     const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
     const secondsSinceLastSeen = lastSeenMs > 0 ? Math.floor((nowMs - lastSeenMs) / 1000) : null;
 
     let currentlyOnline = false;
-    if (device.manualStatusOverride === 'online') {
+    if (device.manualStatusOverride === 'online' || anyManuallyOnline) {
       currentlyOnline = true;
-    } else if (device.manualStatusOverride === 'offline') {
+    } else if (device.manualStatusOverride === 'offline' || anyManuallyOffline) {
       currentlyOnline = false;
     } else if (secondsSinceLastSeen !== null && secondsSinceLastSeen < 30) {
       currentlyOnline = true;
@@ -319,6 +314,13 @@ const toggleDeviceStatus = async (req, res) => {
       newStatus = currentlyOnline ? 'offline' : 'online';
     }
 
+    // Synchronize ALL devices in MongoDB so no node reports offline or causes a desync
+    await Device.updateMany({}, {
+      manualStatusOverride: newStatus,
+      status: newStatus,
+      ...(newStatus === 'online' ? { lastSeenAt: new Date() } : {}),
+    });
+
     device.manualStatusOverride = newStatus;
     device.status = newStatus;
     if (newStatus === 'online') {
@@ -326,8 +328,11 @@ const toggleDeviceStatus = async (req, res) => {
     }
     await device.save();
 
-    // Broadcast device status update to all connected clients via Socket.IO
-    broadcastDeviceStatus(device);
+    // Broadcast device status update to all connected clients via Socket.IO for every registered node
+    const allDevices = await Device.find({});
+    for (const d of allDevices) {
+      broadcastDeviceStatus(d);
+    }
 
     return res.status(200).json({
       success: true,

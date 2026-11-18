@@ -47,8 +47,18 @@ export const SocketProvider = ({ children }) => {
           ...prev,
           [statusData.deviceId]: statusData,
         }));
-        if (statusData.deviceId === 'RESQ-NODE-01' || !statusData.deviceId) {
-          setControllerDeviceOnline(statusData.status === 'online' || statusData.isOnline === true);
+        if (
+          statusData.deviceId === 'RESQ-NODE-01' ||
+          !statusData.deviceId ||
+          statusData.manualStatusOverride !== undefined
+        ) {
+          if (statusData.manualStatusOverride === 'online') {
+            setControllerDeviceOnline(true);
+          } else if (statusData.manualStatusOverride === 'offline') {
+            setControllerDeviceOnline(false);
+          } else {
+            setControllerDeviceOnline(statusData.status === 'online' || statusData.isOnline === true);
+          }
         }
       }
     };

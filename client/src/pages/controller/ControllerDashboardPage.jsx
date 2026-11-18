@@ -141,6 +141,7 @@ const ControllerDashboardPage = () => {
       if (res.data?.success) {
         const isNowOnline = Boolean(res.data.isOnline);
         setControllerDeviceOnline(isNowOnline);
+        await refreshControllerDeviceStatus?.();
         showToast(
           `Device status changed to ${isNowOnline ? 'CONNECTED (ONLINE)' : 'OFFLINE'}. Real-time update broadcasted!`,
           isNowOnline ? 'success' : 'info'
