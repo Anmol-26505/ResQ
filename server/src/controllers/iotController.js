@@ -600,8 +600,15 @@ const getHazardStatus = async (req, res, next) => {
     let maxVibration = 0;
 
     devices.forEach((d) => {
+      const isDevOnline = d.status === 'online' || d.manualStatusOverride === 'online';
       const r = d.latestReading;
-      if (!r) return;
+      if (!r || !isDevOnline) return;
+
+      // Only count reading if it was received within the last 60 seconds
+      const readingMs = r.timestamp ? new Date(r.timestamp).getTime() : (r.createdAt ? new Date(r.createdAt).getTime() : 0);
+      const isFreshReading = readingMs > 0 && (Date.now() - readingMs) < 60000;
+      if (!isFreshReading) return;
+
       if (r.flame) hasFire = true;
       if (r.smoke !== undefined && r.smoke !== null && r.smoke > maxSmoke) maxSmoke = r.smoke;
       if (r.tilt) hasTilt = true;

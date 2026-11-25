@@ -169,17 +169,17 @@ const LiveMonitoringPage = () => {
   const activeReading = telemetryHistory[0] || selectedDevice?.latestReading || {};
 
   // Freshness calculations (< 30s = FRESH, 30s-2m = STALE, > 2m = OFFLINE)
-  const readingTime = activeReading.timestamp
+  const readingTime = activeReading?.timestamp
     ? new Date(activeReading.timestamp).getTime()
-    : (selectedDevice?.lastSeenAt ? new Date(selectedDevice.lastSeenAt).getTime() : 0);
+    : (activeReading?.createdAt ? new Date(activeReading.createdAt).getTime() : 0);
   const readingAgeMs = readingTime > 0 ? (Date.now() - readingTime) : Infinity;
-  const isFresh = readingAgeMs < 30000;
+  const isFresh = readingTime > 0 && readingAgeMs < 30000;
   const isStale = readingAgeMs >= 30000 && readingAgeMs < 120000;
   const isOffline = readingAgeMs >= 120000 || readingTime === 0;
 
   const freshnessStatus = isFresh ? 'FRESH' : (isStale ? 'STALE' : 'OFFLINE');
-  const isSimulated = Boolean(activeReading.isSimulated);
-  const sequenceNumber = activeReading.seq !== undefined && activeReading.seq !== null ? `#${activeReading.seq}` : (activeReading.sequenceNumber !== undefined && activeReading.sequenceNumber !== null ? `#${activeReading.sequenceNumber}` : '--');
+  const isSimulated = Boolean(activeReading?.isSimulated);
+  const sequenceNumber = activeReading?.seq !== undefined && activeReading?.seq !== null ? `#${activeReading.seq}` : (activeReading?.sequenceNumber !== undefined && activeReading?.sequenceNumber !== null ? `#${activeReading.sequenceNumber}` : '--');
 
   // Device Connection Status & Data Freshness (Part 8 exact states)
   let deviceConnectionStatus = 'WAITING FOR DATA';
@@ -212,28 +212,44 @@ const LiveMonitoringPage = () => {
   }
 
   // Status assessments against standard safety thresholds (NO FAKE FALLBACKS)
-  const temp = activeReading.temperature !== undefined && activeReading.temperature !== null ? activeReading.temperature : null;
-  const hum = activeReading.humidity !== undefined && activeReading.humidity !== null ? activeReading.humidity : null;
-  const gas = activeReading.gas !== undefined && activeReading.gas !== null ? activeReading.gas : null;
-  const smoke = activeReading.smoke !== undefined && activeReading.smoke !== null ? activeReading.smoke : (gas !== null ? Math.round(gas * 0.85) : null);
-  const flame = Boolean(activeReading.flame);
-  const tilt = Boolean(activeReading.tilt);
-  const earthquake = Boolean(activeReading.earthquake);
-  const vibration = activeReading.vibration !== undefined && activeReading.vibration !== null ? activeReading.vibration : null;
+  const temp = activeReading?.temperature !== undefined && activeReading?.temperature !== null ? activeReading.temperature : null;
+  const hum = activeReading?.humidity !== undefined && activeReading?.humidity !== null ? activeReading.humidity : null;
+  const gas = activeReading?.gas !== undefined && activeReading?.gas !== null ? activeReading.gas : null;
+  const smoke = activeReading?.smoke !== undefined && activeReading?.smoke !== null ? activeReading.smoke : (gas !== null ? Math.round(gas * 0.85) : null);
+  const flame = Boolean(activeReading?.flame);
+  const tilt = Boolean(activeReading?.tilt);
+  const earthquake = Boolean(activeReading?.earthquake);
+  const vibration = activeReading?.vibration !== undefined && activeReading?.vibration !== null ? activeReading.vibration : null;
   const hasWaterSensor = Boolean(
-    activeReading.hasWaterSensor === true ||
-    (isSimulated && (activeReading.water === true || (activeReading.waterLevel && activeReading.waterLevel > 0)))
+    activeReading?.hasWaterSensor === true ||
+    (isSimulated && (activeReading?.water === true || (activeReading?.waterLevel && activeReading.waterLevel > 0)))
   );
-  const water = Boolean(hasWaterSensor && activeReading.water);
-  const waterLevel = hasWaterSensor && activeReading.waterLevel !== undefined && activeReading.waterLevel !== null ? activeReading.waterLevel : null;
+  const water = Boolean(hasWaterSensor && activeReading?.water);
+  const waterLevel = hasWaterSensor && activeReading?.waterLevel !== undefined && activeReading?.waterLevel !== null ? activeReading.waterLevel : null;
 
-  const isTempCritical = temp !== null && temp > 50;
-  const isTempWarning = temp !== null && temp > 36;
-  const isGasCritical = (gas !== null && gas > 300) || (smoke !== null && smoke > 300) || Boolean(manualHazards.gas);
-  const isGasWarning = (gas !== null && gas > 180) || (smoke !== null && smoke > 180);
-  const isFlameCritical = flame === true || Boolean(manualHazards.fire);
-  const isTiltCritical = tilt || earthquake || (vibration !== null && vibration > 0.22) || Boolean(manualHazards.tilt || manualHazards.earthquake);
-  const isWaterCritical = Boolean(hasWaterSensor && (water || (waterLevel !== null && waterLevel > 40))) || Boolean(manualHazards.water);
+  // Strict physical hazard verification: only active if device is connected AND reading is fresh
+  const isDeviceOnline = deviceApiOnline === true || (deviceApiOnline === null && isFresh);
+  const hasValidFreshSensorStream = Boolean(
+    isDeviceOnline &&
+    isFresh &&
+    activeReading &&
+    (activeReading.deviceId || isSimulated)
+  );
+
+  const isTempCritical = Boolean(hasValidFreshSensorStream && temp !== null && temp > 50);
+  const isTempWarning = Boolean(hasValidFreshSensorStream && temp !== null && temp > 36);
+  const isGasCritical = Boolean((hasValidFreshSensorStream && ((gas !== null && gas > 300) || (smoke !== null && smoke > 300))) || manualHazards.gas);
+  const isGasWarning = Boolean(hasValidFreshSensorStream && ((gas !== null && gas > 180) || (smoke !== null && smoke > 180)));
+  const isFlameCritical = Boolean((hasValidFreshSensorStream && flame === true) || manualHazards.fire);
+  const isTiltCritical = Boolean(
+    (hasValidFreshSensorStream && (tilt || earthquake || (vibration !== null && vibration > 0.22))) ||
+    manualHazards.tilt ||
+    manualHazards.earthquake
+  );
+  const isWaterCritical = Boolean(
+    (hasValidFreshSensorStream && hasWaterSensor && (water || (waterLevel !== null && waterLevel > 40))) ||
+    manualHazards.water
+  );
 
   if (loading) {
     return (

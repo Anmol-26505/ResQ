@@ -75,6 +75,19 @@ const startServer = async () => {
       }
     );
 
+    // Auto-resolve any stale active alerts older than 5 minutes on server reboot
+    await Alert.updateMany(
+      {
+        status: 'active',
+        timestamp: { $lt: new Date(Date.now() - 5 * 60 * 1000) },
+      },
+      {
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolutionNotes: 'Auto-resolved: Stale alert cleared during server startup cleanup',
+      }
+    );
+
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`=================================================`);
       console.log(`🛡️  ResQ IoT Emergency Monitoring Platform Backend`);

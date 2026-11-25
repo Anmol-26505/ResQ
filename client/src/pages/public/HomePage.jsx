@@ -255,18 +255,19 @@ const HomePage = () => {
   const currentData = telemetryHistory[0] || selectedDevice?.latestReading || {};
 
   // Freshness calculations (< 30s = FRESH, 30s-2m = STALE, > 2m = OFFLINE)
-  const readingTime = currentData.timestamp
+  // CRITICAL: readingTime must ONLY come from the reading timestamp, NEVER from device lastSeenAt
+  const readingTime = currentData?.timestamp
     ? new Date(currentData.timestamp).getTime()
-    : (selectedDevice?.lastSeenAt ? new Date(selectedDevice.lastSeenAt).getTime() : 0);
+    : (currentData?.createdAt ? new Date(currentData.createdAt).getTime() : 0);
   const readingAgeMs = readingTime > 0 ? (Date.now() - readingTime) : Infinity;
-  const isFresh = readingAgeMs < 30000;
+  const isFresh = readingTime > 0 && readingAgeMs < 30000;
   const isStale = readingAgeMs >= 30000 && readingAgeMs < 120000;
   const isOffline = readingAgeMs >= 120000 || readingTime === 0;
 
   const freshnessStatus = isFresh ? 'FRESH' : (isStale ? 'STALE' : 'OFFLINE');
-  const isSimulated = Boolean(currentData.isSimulated);
-  const dataSource = isSimulated ? 'SIMULATOR' : (currentData.deviceId ? 'REAL HARDWARE' : 'STANDBY');
-  const sequenceNumber = currentData.seq !== undefined && currentData.seq !== null ? `#${currentData.seq}` : (currentData.sequenceNumber !== undefined && currentData.sequenceNumber !== null ? `#${currentData.sequenceNumber}` : '--');
+  const isSimulated = Boolean(currentData?.isSimulated);
+  const dataSource = isSimulated ? 'SIMULATOR' : (currentData?.deviceId ? 'REAL HARDWARE' : 'STANDBY');
+  const sequenceNumber = currentData?.seq !== undefined && currentData?.seq !== null ? `#${currentData.seq}` : (currentData?.sequenceNumber !== undefined && currentData?.sequenceNumber !== null ? `#${currentData.sequenceNumber}` : '--');
 
   // Device Connection Status & Data Freshness (Exact Part 8 Specification)
   let deviceConnectionStatus = 'WAITING FOR DATA';
@@ -299,22 +300,22 @@ const HomePage = () => {
   }
 
   // Extraction of all physical sensor metrics (NO FAKE / MOCK NUMBERS IN PRODUCTION)
-  const flameDetected = Boolean(currentData.flame);
-  const temp = currentData.temperature !== undefined && currentData.temperature !== null ? currentData.temperature : null;
-  const hum = currentData.humidity !== undefined && currentData.humidity !== null ? currentData.humidity : null;
-  const gas = currentData.gas !== undefined && currentData.gas !== null ? currentData.gas : null;
-  const smoke = currentData.smoke !== undefined && currentData.smoke !== null ? currentData.smoke : (gas !== null ? Math.round(gas * 0.85) : null);
-  const tiltDetected = Boolean(currentData.tilt);
-  const tiltAngle = currentData.tiltAngle !== undefined && currentData.tiltAngle !== null ? currentData.tiltAngle : null;
-  const earthquakeDetected = Boolean(currentData.earthquake);
-  const vibration = currentData.vibration !== undefined && currentData.vibration !== null ? currentData.vibration : null;
-  const waterDetected = Boolean(currentData.hasWaterSensor && currentData.water);
+  const flameDetected = Boolean(currentData?.flame);
+  const temp = currentData?.temperature !== undefined && currentData?.temperature !== null ? currentData.temperature : null;
+  const hum = currentData?.humidity !== undefined && currentData?.humidity !== null ? currentData.humidity : null;
+  const gas = currentData?.gas !== undefined && currentData?.gas !== null ? currentData.gas : null;
+  const smoke = currentData?.smoke !== undefined && currentData?.smoke !== null ? currentData.smoke : (gas !== null ? Math.round(gas * 0.85) : null);
+  const tiltDetected = Boolean(currentData?.tilt);
+  const tiltAngle = currentData?.tiltAngle !== undefined && currentData?.tiltAngle !== null ? currentData.tiltAngle : null;
+  const earthquakeDetected = Boolean(currentData?.earthquake);
+  const vibration = currentData?.vibration !== undefined && currentData?.vibration !== null ? currentData.vibration : null;
+  const waterDetected = Boolean(currentData?.hasWaterSensor && currentData?.water);
   const hasWaterSensor = Boolean(
-    currentData.hasWaterSensor === true ||
-    (isSimulated && (currentData.water === true || (currentData.waterLevel && currentData.waterLevel > 0)))
+    currentData?.hasWaterSensor === true ||
+    (isSimulated && (currentData?.water === true || (currentData?.waterLevel && currentData.waterLevel > 0)))
   );
-  const waterLevel = hasWaterSensor && currentData.waterLevel !== undefined && currentData.waterLevel !== null ? currentData.waterLevel : null;
-  const distance = currentData.distance !== undefined && currentData.distance !== null && currentData.distance > 0 ? currentData.distance : null;
+  const waterLevel = hasWaterSensor && currentData?.waterLevel !== undefined && currentData?.waterLevel !== null ? currentData.waterLevel : null;
+  const distance = currentData?.distance !== undefined && currentData?.distance !== null && currentData.distance > 0 ? currentData.distance : null;
 
   // isDeviceOnline: explicit online/offline derived from controller/API/heartbeat
   const isDeviceOnline = deviceApiOnline === true || (deviceApiOnline === null && isFresh);
@@ -322,12 +323,21 @@ const HomePage = () => {
     ? new Date(readingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : 'Awaiting live stream';
 
+  // Strict physical hazard verification: MUST have active device AND fresh reading stream (< 45s)
+  const hasValidFreshSensorStream = Boolean(
+    isDeviceOnline &&
+    isFresh &&
+    currentData &&
+    (currentData.deviceId || isSimulated)
+  );
+
   // Hazard conditions based on Physical Sensors (hardware or simulator)
-  const physicalFireHazard = flameDetected || (temp !== null && temp > 50);
-  const physicalSmokeHazard = (smoke !== null && smoke > 200) || (gas !== null && gas > 200);
-  const physicalTiltHazard = tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) >= 10);
-  const physicalQuakeHazard = earthquakeDetected || (vibration !== null && vibration >= 0.22);
-  const physicalWaterHazard = Boolean(hasWaterSensor && (waterDetected || (waterLevel !== null && waterLevel > 40)));
+  // NEVER evaluate stale historical records or offline devices as active physical hazards
+  const physicalFireHazard = Boolean(hasValidFreshSensorStream && (flameDetected || (temp !== null && temp > 50)));
+  const physicalSmokeHazard = Boolean(hasValidFreshSensorStream && ((smoke !== null && smoke > 200) || (gas !== null && gas > 200)));
+  const physicalTiltHazard = Boolean(hasValidFreshSensorStream && (tiltDetected || (tiltAngle !== null && Math.abs(tiltAngle) >= 15)));
+  const physicalQuakeHazard = Boolean(hasValidFreshSensorStream && (earthquakeDetected || (vibration !== null && vibration >= 0.35)));
+  const physicalWaterHazard = Boolean(hasValidFreshSensorStream && hasWaterSensor && (waterDetected || (waterLevel !== null && waterLevel > 40)));
 
   // Final consolidated hazard state (Physical Sensors || Remote Manual Controller)
   // Ensures neither source overwrites the other and both maintain separate state
@@ -352,8 +362,8 @@ const HomePage = () => {
     return true;
   });
 
-  // Siren sounds on FRESH physical hazard (< 30s) OR ANY active manual controller hazard!
-  const shouldSoundAlarm = (isFresh && isAnyPhysicalHazard) || isAnyManualHazard;
+  // Siren sounds ONLY on valid fresh physical hazard OR ANY active manual controller hazard!
+  const shouldSoundAlarm = (hasValidFreshSensorStream && isAnyPhysicalHazard) || isAnyManualHazard;
   const anyHazardActive = shouldSoundAlarm || isAnyHazardActive;
 
   // Compile active emergency alerts for simultaneous presentation

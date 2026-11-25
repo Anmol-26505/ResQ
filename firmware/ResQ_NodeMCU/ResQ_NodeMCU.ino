@@ -192,8 +192,10 @@ void setup() {
     Serial.println("   👉 Check wiring: SDA->D2, SCL->D1, VCC->VIN (5V), GND->GND, AD0->GND");
   }
 
-  // 3. Connect to Wi-Fi with automatic persistence and background reconnection
+  // 3. Connect to Wi-Fi with maximum RF power and no modem sleep
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP); // Disable Wi-Fi modem sleep to maintain solid radio link at low RSSI
+  WiFi.setOutputPower(20.5);           // Maximize ESP8266 RF transmitter output power to 20.5 dBm
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -223,6 +225,17 @@ void setup() {
 // =============================================================
 void loop() {
   unsigned long now = millis();
+
+  // Active Wi-Fi Reconnection Watchdog (Non-blocking)
+  if (WiFi.status() != WL_CONNECTED) {
+    static unsigned long lastWifiReconnectAttempt = 0;
+    if (now - lastWifiReconnectAttempt >= 3000) {
+      lastWifiReconnectAttempt = now;
+      Serial.printf("\n🔄 [Wi-Fi Watchdog] Connection dropped (Status: %d, RSSI: %d dBm). Reconnecting to %s...\n",
+                    WiFi.status(), WiFi.RSSI(), WIFI_SSID);
+      WiFi.reconnect();
+    }
+  }
 
   // 1. Continuous high-frequency MPU6050 sampling (every 20ms = 50 Hz)
   if (now - lastMpuPollTime >= MPU_POLL_INTERVAL_MS) {
@@ -306,7 +319,8 @@ void printStatusSummary(int flamePinRaw, bool fireDetected, int gasRaw, bool gas
   Serial.printf("  Device ID              : %s\n", DEVICE_ID);
   Serial.printf("  WiFi Status            : %s\n", (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED");
   Serial.printf("  IP Address             : %s\n", (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString().c_str() : "0.0.0.0");
-  Serial.printf("  WiFi Signal Strength   : %d dBm\n", WiFi.RSSI());
+  Serial.printf("  WiFi Signal Strength   : %d dBm%s\n", WiFi.RSSI(), (WiFi.RSSI() < -85) ? " ⚠️ (VERY WEAK SIGNAL! Bring device closer to router)" : " (GOOD)");
+  Serial.printf("  Free RAM (Heap)        : %u bytes\n", ESP.getFreeHeap());
   Serial.printf("  Sequence Number        : #%lu (Retries: %d)\n", telemetrySeq, retryCount);
   Serial.printf("  Device Timestamp       : %lu ms (Uptime: %lu s)\n", millis(), millis() / 1000);
   Serial.println();
@@ -645,10 +659,13 @@ void transmitTelemetry() {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setBufferSizes(1024, 512); // Conserve heap and avoid TLS allocation failure
-  client.setTimeout(HTTP_TIMEOUT_MS); // 25-second timeout for Cloudflare + Render SSL roundtrip
+  // CRITICAL FIX: 3584-byte RX buffer accommodates Cloudflare's TLS certificate chain (2.5KB-3.2KB)
+  // Previous 1024-byte buffer overflowed BearSSL, causing HTTP -1 "connection failed" errors!
+  client.setBufferSizes(3584, 512);
+  client.setTimeout(HTTP_TIMEOUT_MS);
 
   HTTPClient http;
+  http.setReuse(false);
   transmissionStage = "2. REQUEST SENT";
 
   if (!http.begin(client, RESQ_SERVER_URL)) {
@@ -664,7 +681,7 @@ void transmitTelemetry() {
     return;
   }
 
-  http.setTimeout(HTTP_TIMEOUT_MS); // CRITICAL: Overrides HTTPClient default 5000ms read timeout!
+  http.setTimeout(HTTP_TIMEOUT_MS); // Overrides HTTPClient default 5000ms read timeout!
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", DEVICE_API_KEY);
 
@@ -677,8 +694,14 @@ void transmitTelemetry() {
     httpResponse = http.getString();
   } else {
     httpResponse = http.errorToString(httpCode);
+    char sslErr[128] = {0};
+    client.getLastSSLError(sslErr, sizeof(sslErr));
+    if (strlen(sslErr) > 0) {
+      httpResponse += String(" [BearSSL: ") + String(sslErr) + "]";
+    }
   }
   http.end();
+  client.stop(); // Explicitly release BearSSL buffers and free heap immediately
   lastHttpResponse = httpResponse;
 
   if (httpCode < 0) {

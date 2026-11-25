@@ -27,6 +27,8 @@ const getAlerts = async (req, res, next) => {
       filter.$nor = [
         { sensorType: { $in: ['water', 'waterLevel'] }, readingValue: { $in: [false, 0, '0', null] } },
       ];
+      // Only return fresh active alerts (within last 2 hours) to avoid stale test records
+      filter.timestamp = { $gte: new Date(Date.now() - 2 * 60 * 60 * 1000) };
     }
 
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);

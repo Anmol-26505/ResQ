@@ -1,6 +1,6 @@
 const Alert = require('../models/Alert');
 const AlertRule = require('../models/AlertRule');
-const { broadcastAlert } = require('../sockets/socketHandler');
+const { broadcastAlert, broadcastAlertUpdated } = require('../sockets/socketHandler');
 
 /**
  * Compare reading value with threshold value based on rule operator.
@@ -117,6 +117,25 @@ const processReadingAlerts = async (reading, device) => {
         // Broadcast alert in real-time
         broadcastAlert(newAlert);
         generatedAlerts.push(newAlert);
+      } else {
+        // Sensor reading is normal / safe — auto-resolve any active alerts for this device and sensor type
+        try {
+          const activeAlerts = await Alert.find({
+            deviceId: reading.deviceId.toUpperCase(),
+            sensorType: rule.sensorType,
+            status: 'active',
+          });
+
+          for (const alertToResolve of activeAlerts) {
+            alertToResolve.status = 'resolved';
+            alertToResolve.resolvedAt = new Date();
+            alertToResolve.resolutionNotes = `Auto-resolved: Sensor normalized to ${sensorVal}`;
+            await alertToResolve.save();
+            broadcastAlertUpdated(alertToResolve);
+          }
+        } catch (resolveErr) {
+          console.warn('Could not auto-resolve normalized alert:', resolveErr.message);
+        }
       }
     }
 

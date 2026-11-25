@@ -319,7 +319,7 @@ const seedData = async (isStandalone = false) => {
         title: 'Elevated Heat Warning [RESQ-NODE-01]',
         message: 'Temperature rising above normal HVAC operating limits: temperature reading is 37.8°C (threshold: > 36°C)',
         severity: 'warning',
-        status: 'active',
+        status: 'resolved',
         deviceId: 'RESQ-NODE-01',
         device: devices[0]._id,
         sensorType: 'temperature',
@@ -327,6 +327,8 @@ const seedData = async (isStandalone = false) => {
         thresholdValue: 36,
         rule: rules[2]._id,
         isSimulated: true,
+        resolvedAt: new Date(now.getTime() - 10 * 60 * 1000),
+        resolutionNotes: 'Historical alert seeded as resolved',
         timestamp: new Date(now.getTime() - 15 * 60 * 1000), // 15 mins ago
       },
       {
