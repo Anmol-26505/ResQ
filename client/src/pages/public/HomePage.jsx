@@ -648,19 +648,6 @@ const HomePage = () => {
           </div>
 
           <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Data Source:</span>
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                isSimulated
-                  ? 'bg-amber-950 text-amber-300 border border-amber-700'
-                  : 'bg-teal-950 text-teal-300 border border-teal-700'
-              }`}
-            >
-              {dataSource}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
             <span className="font-semibold text-slate-400 text-[11px] uppercase tracking-wider">Freshness:</span>
             <span
               className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
@@ -928,9 +915,6 @@ const HomePage = () => {
                         <span className="text-[10px] font-black uppercase tracking-wider bg-white text-slate-900 px-2.5 py-0.5 rounded-full shadow-sm">
                           {alert.name}
                         </span>
-                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/25 text-white border border-white/20">
-                          Source: {alert.source}
-                        </span>
                       </div>
                       <h4 className="text-base font-black mt-1 text-white tracking-tight">
                         {alert.title}
@@ -989,11 +973,6 @@ const HomePage = () => {
                 >
                   {isFireHazard ? 'Fire Detected!' : 'Safe (No Fire)'}
                 </span>
-                {isFireHazard && (
-                  <span className="text-[10px] font-bold text-rose-700 bg-rose-100/80 px-2 py-0.5 rounded border border-rose-300 font-mono">
-                    Src: {manualHazards.fire ? (physicalFireHazard ? 'Sensor + Controller' : 'Manual Controller') : 'Hardware Sensor'}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -1067,11 +1046,6 @@ const HomePage = () => {
                 >
                   {isSmokeHazard ? 'Smoke Alert!' : 'Air Quality Safe'}
                 </span>
-                {isSmokeHazard && (
-                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-300 font-mono">
-                    Src: {manualHazards.gas ? (physicalSmokeHazard ? 'Sensor + Controller' : 'Manual Controller') : 'Hardware Sensor'}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -1158,13 +1132,6 @@ const HomePage = () => {
                 >
                   {isTiltHazard ? 'Sustained Tilt!' : (isQuakeHazard ? 'Seismic Tremor!' : 'Structure Stable')}
                 </span>
-                {(isTiltHazard || isQuakeHazard) && (
-                  <span className="text-[10px] font-bold text-orange-800 bg-orange-100/80 px-2 py-0.5 rounded border border-orange-300 font-mono">
-                    Src: {manualHazards.tilt || manualHazards.earthquake
-                      ? (physicalTiltHazard || physicalQuakeHazard ? 'Sensor + Controller' : 'Manual Controller')
-                      : 'Hardware MPU6050'}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -1249,11 +1216,6 @@ const HomePage = () => {
                 >
                   {isWaterHazard ? 'Water Leak Alert!' : (!hasWaterSensor ? 'Sensor Not Connected' : 'Dry & Normal')}
                 </span>
-                {isWaterHazard && (
-                  <span className="text-[10px] font-bold text-cyan-800 bg-cyan-100/80 px-2 py-0.5 rounded border border-cyan-300 font-mono">
-                    Src: {manualHazards.water ? (physicalWaterHazard ? 'Sensor + Controller' : 'Manual Controller') : 'Physical Probe'}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -1349,92 +1311,6 @@ const HomePage = () => {
             <span>Hardware: NodeMCU ESP8266</span>
             <span className="font-semibold text-slate-700">Digital Pin D2</span>
           </div>
-        </div>
-      </div>
-
-      {/* 6. Live Ingested Telemetry Feed Table (No Occupancy) */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-card overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50/60">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">Live Ingested Telemetry Stream</h3>
-            <p className="text-xs text-slate-500">Direct packet log pushed via Socket.IO from edge microcontroller</p>
-          </div>
-          <span className="text-xs font-mono text-teal-700 font-bold bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-            Auto-Updating Every 2s
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100/75 text-slate-600 text-[11px] uppercase tracking-wider font-semibold border-b border-slate-200">
-                <th className="py-2.5 px-4">Time</th>
-                <th className="py-2.5 px-4">Device</th>
-                <th className="py-2.5 px-4">Fire (Flame)</th>
-                <th className="py-2.5 px-4">Gas / Smoke</th>
-                <th className="py-2.5 px-4">MPU6050 Tilt / Quake</th>
-                <th className="py-2.5 px-4">Ultrasonic / Water</th>
-                <th className="py-2.5 px-4">Temp</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-              {telemetryHistory.length > 0 ? (
-                telemetryHistory.map((packet, idx) => (
-                  <tr key={packet._id || idx} className={idx === 0 ? 'bg-teal-50/30' : 'hover:bg-slate-50'}>
-                    <td className="py-2.5 px-4 text-slate-500">
-                      {new Date(packet.timestamp || Date.now()).toLocaleTimeString()}
-                    </td>
-                    <td className="py-2.5 px-4 font-bold text-slate-900">{packet.deviceId || 'RESQ-NODE-01'}</td>
-                    <td className="py-2.5 px-4">
-                      {packet.flame ? (
-                        <span className="px-2 py-0.5 rounded bg-rose-600 text-white font-bold text-[10px]">
-                          FIRE!
-                        </span>
-                      ) : (
-                        <span className="text-emerald-700">Clear</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-4 font-bold text-amber-700">
-                      {packet.gas !== undefined && packet.gas !== null
-                        ? `${packet.gas} PPM`
-                        : packet.smoke !== undefined && packet.smoke !== null
-                        ? `${packet.smoke} PPM`
-                        : '--'}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      {packet.tilt || packet.earthquake ? (
-                        <span className="px-2 py-0.5 rounded bg-orange-600 text-white font-bold text-[10px]">
-                          {packet.tilt ? 'TILT!' : 'QUAKE!'}
-                        </span>
-                      ) : (
-                        <span className="text-emerald-700">
-                          {packet.tiltAngle !== undefined && packet.tiltAngle !== null ? `${packet.tiltAngle}°` : 'Stable'} ({packet.vibration !== undefined && packet.vibration !== null ? `${packet.vibration}g` : '--'})
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-4 font-bold text-cyan-700">
-                      {packet.distance !== undefined && packet.distance !== null
-                        ? `${packet.distance} cm`
-                        : packet.water
-                        ? 'LEAK!'
-                        : packet.hasWaterSensor
-                        ? 'Dry'
-                        : 'N/A'}
-                    </td>
-                    <td className="py-2.5 px-4 text-rose-600">
-                      {packet.temperature !== undefined && packet.temperature !== null ? `${packet.temperature} °C` : '--'}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="py-6 text-center text-xs text-slate-400 font-sans">
-                    Waiting for incoming telemetry packets...
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
       </div>
 

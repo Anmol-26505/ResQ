@@ -327,26 +327,37 @@ const OverviewPage = () => {
 
           <div className="flex-1 divide-y divide-slate-100 overflow-y-auto max-h-[300px]">
             {activeAlertsList.length > 0 ? (
-              activeAlertsList.map((alert) => (
-                <div key={alert._id} className="py-3 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                        alert.severity === 'critical'
-                          ? 'bg-rose-100 text-rose-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {alert.severity}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      {new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+              activeAlertsList.map((alert) => {
+                const displayTitle = (alert.title || '')
+                  .replace(/\s*\(Manual Controller\)/gi, '')
+                  .replace(/\s*\[Triggered by.*?\]/gi, '')
+                  .trim();
+                const displayMessage = (alert.message || '')
+                  .replace(/\s*\[Triggered by.*?\]/gi, '')
+                  .replace(/\s*\(Manual Controller\)/gi, '')
+                  .trim();
+
+                return (
+                  <div key={alert._id} className="py-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                          alert.severity === 'critical'
+                            ? 'bg-rose-100 text-rose-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {alert.severity}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <h4 className="text-xs font-bold text-slate-800 truncate">{displayTitle}</h4>
+                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{displayMessage}</p>
                   </div>
-                  <h4 className="text-xs font-bold text-slate-800 truncate">{alert.title}</h4>
-                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{alert.message}</p>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="py-12 text-center text-xs text-slate-400 space-y-2">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />

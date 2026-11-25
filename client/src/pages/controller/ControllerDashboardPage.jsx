@@ -489,7 +489,7 @@ const ControllerDashboardPage = () => {
                     <span className="flex items-center gap-1 font-mono">
                       <Clock className="w-3.5 h-3.5 text-slate-500" />
                       {isActive && details.activatedAt
-                        ? `Triggered: ${new Date(details.activatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+                        ? `Active Since: ${new Date(details.activatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
                         : 'Status: Inactive'}
                     </span>
                     <span className="font-semibold text-slate-500 uppercase text-[10px]">

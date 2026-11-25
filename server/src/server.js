@@ -88,6 +88,27 @@ const startServer = async () => {
       }
     );
 
+    // Sanitize any existing legacy alerts in DB to remove source text
+    try {
+      const legacyAlerts = await Alert.find({
+        $or: [
+          { title: /Manual Controller/i },
+          { message: /Triggered by/i },
+          { deviceId: 'MANUAL-CONTROLLER' },
+        ],
+      });
+      for (const la of legacyAlerts) {
+        la.title = la.title.replace(/\s*\(Manual Controller\)/gi, '').trim();
+        la.message = la.message.replace(/\s*\[Triggered by.*?\]/gi, '').trim();
+        if (la.deviceId === 'MANUAL-CONTROLLER') {
+          la.deviceId = 'RESQ-NODE-01';
+        }
+        await la.save();
+      }
+    } catch (cleanErr) {
+      console.warn('Could not sanitize legacy alerts:', cleanErr.message);
+    }
+
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`=================================================`);
       console.log(`🛡️  ResQ IoT Emergency Monitoring Platform Backend`);

@@ -225,6 +225,19 @@ const AlertsPage = () => {
             const isAck = alert.status === 'acknowledged';
             const isResolved = alert.status === 'resolved';
 
+            // Sanitize title and message to completely remove any source labels
+            const displayTitle = (alert.title || '')
+              .replace(/\s*\(Manual Controller\)/gi, '')
+              .replace(/\s*\[Triggered by.*?\]/gi, '')
+              .trim();
+
+            const displayMessage = (alert.message || '')
+              .replace(/\s*\[Triggered by.*?\]/gi, '')
+              .replace(/\s*\(Manual Controller\)/gi, '')
+              .trim();
+
+            const displayDevice = alert.deviceId === 'MANUAL-CONTROLLER' ? 'RESQ-NODE-01' : alert.deviceId;
+
             return (
               <div
                 key={alert._id}
@@ -247,9 +260,9 @@ const AlertsPage = () => {
                     >
                       {alert.severity}
                     </span>
-                    <span className="font-mono text-xs font-bold text-slate-900">{alert.deviceId}</span>
+                    <span className="font-mono text-xs font-bold text-slate-900">{displayDevice}</span>
                     <span className="text-slate-300">•</span>
-                    <span className="text-xs text-slate-500 font-medium capitalize">{alert.sensorType} Sensor</span>
+                    <span className="text-xs text-slate-500 font-medium capitalize">{alert.sensorType}</span>
                   </div>
 
                   <div className="flex items-center gap-3 text-xs text-slate-400 font-mono">
@@ -268,18 +281,18 @@ const AlertsPage = () => {
                   </div>
                 </div>
 
-                {/* Message & Sensor Reading Details */}
+                {/* Message & Reading Details */}
                 <div className="py-3 space-y-2">
-                  <h3 className="font-bold text-sm text-slate-900">{alert.title}</h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">{alert.message}</p>
+                  <h3 className="font-bold text-sm text-slate-900">{displayTitle}</h3>
+                  <p className="text-xs text-slate-600 leading-relaxed">{displayMessage}</p>
 
                   <div className="inline-flex items-center gap-4 text-xs font-mono bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700">
                     <div>
-                      <span className="text-slate-400 text-[10px] uppercase font-sans">Trigger Value: </span>
+                      <span className="text-slate-400 text-[10px] uppercase font-sans">Current Value: </span>
                       <span className="font-bold text-rose-600">{String(alert.readingValue)}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 text-[10px] uppercase font-sans">Threshold Rule: </span>
+                      <span className="text-slate-400 text-[10px] uppercase font-sans">Safety Threshold: </span>
                       <span className="font-bold text-slate-800">{String(alert.thresholdValue)}</span>
                     </div>
                   </div>

@@ -194,23 +194,23 @@ const activateHazard = async (hazardName, activatedBy = 'Anmol') => {
     // Resolve any older active manual alert for this hazard to keep clean
     await Alert.updateMany(
       {
-        deviceId: 'MANUAL-CONTROLLER',
+        deviceId: { $in: ['MANUAL-CONTROLLER', 'RESQ-NODE-01'] },
         sensorType: def.sensorType,
         status: 'active',
       },
       {
         status: 'resolved',
         resolvedAt: now,
-        resolutionNotes: 'Superceded by new manual hazard activation',
+        resolutionNotes: 'Superceded by new hazard activation',
       }
     );
 
     await Alert.create({
-      title: `${def.title} (Manual Controller)`,
-      message: `${def.message} [Triggered by Controller: ${activatedBy}]`,
+      title: def.title,
+      message: def.message,
       severity: def.severity,
       status: 'active',
-      deviceId: 'MANUAL-CONTROLLER',
+      deviceId: 'RESQ-NODE-01',
       sensorType: def.sensorType,
       readingValue: def.readingValue,
       thresholdValue: def.thresholdValue,
@@ -266,14 +266,14 @@ const deactivateHazard = async (hazardName, deactivatedBy = 'Anmol') => {
   try {
     await Alert.updateMany(
       {
-        deviceId: 'MANUAL-CONTROLLER',
+        deviceId: { $in: ['MANUAL-CONTROLLER', 'RESQ-NODE-01'] },
         sensorType: def.sensorType,
         status: 'active',
       },
       {
         status: 'resolved',
         resolvedAt: now,
-        resolutionNotes: `Deactivated by controller ${deactivatedBy}`,
+        resolutionNotes: 'Deactivated by operator',
       }
     );
   } catch (err) {
@@ -321,13 +321,14 @@ const clearAllManualHazards = async (clearedBy = 'Anmol') => {
   try {
     await Alert.updateMany(
       {
-        deviceId: 'MANUAL-CONTROLLER',
+        deviceId: { $in: ['MANUAL-CONTROLLER', 'RESQ-NODE-01'] },
+        sensorType: { $in: Object.values(HAZARD_DEFINITIONS).map((d) => d.sensorType) },
         status: 'active',
       },
       {
         status: 'resolved',
         resolvedAt: now,
-        resolutionNotes: `All manual hazards cleared by controller ${clearedBy}`,
+        resolutionNotes: 'All manual hazards cleared',
       }
     );
   } catch (err) {
